@@ -1,87 +1,140 @@
-import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabaseClient"
-import type { Database } from "@/lib/database.types"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowLeft, ExternalLink } from "lucide-react"
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import type { Database } from "@/lib/database.types";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft, ExternalLink, Loader2, Download } from "lucide-react";
 
-type Customer = Database['public']['Tables']['customers']['Row']
-type SkillCheck = Database['public']['Tables']['skill_checks']['Row']
-type CustomerNote = Database['public']['Tables']['customer_notes']['Row']
+type Customer = Database["public"]["Tables"]["customers"]["Row"];
+type SkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"];
+type CustomerNote = Database["public"]["Tables"]["customer_notes"]["Row"];
 
 interface CustomerDetailsProps {
-  customerId: number
-  onBack: () => void
+  customerId: number;
+  onBack: () => void;
 }
 
-export default function CustomerDetails({ customerId, onBack }: CustomerDetailsProps) {
-  const [customer, setCustomer] = useState<Customer | null>(null)
-  const [skillChecks, setSkillChecks] = useState<SkillCheck[]>([])
-  const [notes, setNotes] = useState<CustomerNote[]>([])
-  const [loading, setLoading] = useState(true)
+export default function CustomerDetails({
+  customerId,
+  onBack,
+}: CustomerDetailsProps) {
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [skillChecks, setSkillChecks] = useState<SkillCheck[]>([]);
+  const [notes, setNotes] = useState<CustomerNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  // FIXED: Moved state inside the component
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    fetchCustomerData()
-  }, [customerId])
+    fetchCustomerData();
+  }, [customerId]);
 
   const fetchCustomerData = async () => {
-    setLoading(true)
-    
+    setLoading(true);
+
     // Fetch customer info
     const { data: customerData, error: customerError } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('id', customerId)
-      .single()
+      .from("customers")
+      .select("*")
+      .eq("id", customerId)
+      .single();
 
     if (customerError) {
-      console.error('Error fetching customer:', customerError)
+      console.error("Error fetching customer:", customerError);
     } else {
-      setCustomer(customerData)
+      setCustomer(customerData);
     }
 
     // Fetch skill checks
     const { data: skillData, error: skillError } = await supabase
-      .from('skill_checks')
-      .select('*')
-      .eq('customer_id', customerId)
-      .order('imported_at', { ascending: false })
+      .from("skill_checks")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("imported_at", { ascending: false });
 
     if (skillError) {
-      console.error('Error fetching skill checks:', skillError)
+      console.error("Error fetching skill checks:", skillError);
     } else {
-      setSkillChecks(skillData || [])
+      setSkillChecks(skillData || []);
     }
 
     // Fetch notes
     const { data: notesData, error: notesError } = await supabase
-      .from('customer_notes')
-      .select('*')
-      .eq('customer_id', customerId)
-      .order('created_at', { ascending: false })
+      .from("customer_notes")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false });
 
     if (notesError) {
-      console.error('Error fetching notes:', notesError)
+      console.error("Error fetching notes:", notesError);
     } else {
-      setNotes(notesData || [])
+      setNotes(notesData || []);
     }
 
-    setLoading(false)
-  }
+    setLoading(false);
+  };
+
+  // FIXED: Moved function out of fetchCustomerData so it can be used by the button
+  const handleDownloadPDF = async () => {
+    try {
+      setIsGenerating(true);
+
+      // 1. GET SESSION TOKEN
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        alert("You must be logged in to generate a PDF");
+        return;
+      }
+
+      // 2. CALL LOCAL SERVER (Puppeteer Proxy)
+      // Ensure 'node server.js' is running on port 3001
+      const response = await fetch(
+        `http://localhost:3001/generate-pdf?id=${customerId}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) throw new Error("Server failed to generate PDF");
+
+      // 3. DOWNLOAD FILE
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${customer?.name || "report"}_skill_check.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("PDF Generation Error:", error);
+      alert("Failed to generate PDF. Make sure 'node server.js' is running.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status.toLowerCase()) {
       case "in progress":
-        return "bg-teal-100 text-teal-800"
+        return "bg-teal-100 text-teal-800";
       case "new":
-        return "bg-red-100 text-red-800"
+        return "bg-red-100 text-red-800";
       case "completion":
-        return "bg-green-100 text-green-800"
+        return "bg-green-100 text-green-800";
       default:
-        return "bg-gray-100 text-gray-800"
+        return "bg-gray-100 text-gray-800";
     }
-  }
+  };
 
   if (loading) {
     return (
@@ -90,7 +143,7 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
           <p className="text-gray-500">Loading customer details...</p>
         </div>
       </div>
-    )
+    );
   }
 
   if (!customer) {
@@ -102,7 +155,7 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
         </Button>
         <p className="text-red-600">Customer not found</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -115,12 +168,43 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
         </Button>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">{customer.name}</h1>
-            <p className="text-gray-500">Customer #{customer.customer_number}</p>
+            <h1 className="text-3xl font-bold text-gray-800">
+              {customer.name}
+            </h1>
+            <p className="text-gray-500">
+              Customer #{customer.customer_number}
+            </p>
           </div>
-          <Badge className={`capitalize text-sm px-3 py-1 ${getStatusBadge(customer.status)}`}>
-            {customer.status}
-          </Badge>
+
+          <div className="flex items-center gap-3">
+            {/* PDF BUTTON ADDED HERE */}
+            <Button
+              onClick={handleDownloadPDF}
+              disabled={isGenerating}
+              variant="outline"
+              className="bg-white border-teal-200 text-teal-700 hover:bg-teal-50"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  Save as PDF
+                </>
+              )}
+            </Button>
+
+            <Badge
+              className={`capitalize text-sm px-3 py-1 ${getStatusBadge(
+                customer.status
+              )}`}
+            >
+              {customer.status}
+            </Badge>
+          </div>
         </div>
       </div>
 
@@ -134,23 +218,29 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
             <CardContent className="space-y-3">
               <div>
                 <p className="text-sm text-gray-500">Age</p>
-                <p className="font-medium">{customer.age || 'N/A'}</p>
+                <p className="font-medium">{customer.age || "N/A"}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Prefecture</p>
-                <p className="font-medium">{customer.prefecture || 'N/A'}</p>
+                <p className="font-medium">{customer.prefecture || "N/A"}</p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Occupation</p>
-                <p className="font-medium">{customer.occupation || 'N/A'}</p>
+                <p className="font-medium">{customer.occupation || "N/A"}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-500">Nail Technician Experience</p>
-                <p className="font-medium">{customer.nail_technician_experience || 'N/A'}</p>
+                <p className="text-sm text-gray-500">
+                  Nail Technician Experience
+                </p>
+                <p className="font-medium">
+                  {customer.nail_technician_experience || "N/A"}
+                </p>
               </div>
               <div>
                 <p className="text-sm text-gray-500">Application Date</p>
-                <p className="font-medium">{customer.application_date || 'N/A'}</p>
+                <p className="font-medium">
+                  {customer.application_date || "N/A"}
+                </p>
               </div>
               {customer.google_drive_url && (
                 <div>
@@ -179,15 +269,20 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
             </CardHeader>
             <CardContent>
               {skillChecks.length === 0 ? (
-                <p className="text-gray-500 text-sm">No skill checks recorded yet.</p>
+                <p className="text-gray-500 text-sm">
+                  No skill checks recorded yet.
+                </p>
               ) : (
                 <div className="space-y-4">
                   {skillChecks.map((check) => (
-                    <div key={check.id} className="border rounded-lg p-4 bg-gray-50">
+                    <div
+                      key={check.id}
+                      className="border rounded-lg p-4 bg-gray-50"
+                    >
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <p className="font-semibold text-lg">
-                            Total Score: {check.total_score || 'N/A'}
+                            Total Score: {check.total_score || "N/A"}
                           </p>
                           {check.rank && (
                             <Badge className="mt-1">{check.rank}</Badge>
@@ -197,38 +292,54 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
                           {new Date(check.imported_at).toLocaleDateString()}
                         </p>
                       </div>
-                      
+
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                         <div>
                           <p className="text-gray-500">Filing</p>
-                          <p className="font-medium">{check.filing_score || '-'}</p>
+                          <p className="font-medium">
+                            {check.filing_score || "-"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Care</p>
-                          <p className="font-medium">{check.care_score || '-'}</p>
+                          <p className="font-medium">
+                            {check.care_score || "-"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Color</p>
-                          <p className="font-medium">{check.color_score || '-'}</p>
+                          <p className="font-medium">
+                            {check.color_score || "-"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Art</p>
-                          <p className="font-medium">{check.art_score || '-'}</p>
+                          <p className="font-medium">
+                            {check.art_score || "-"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Counseling</p>
-                          <p className="font-medium">{check.counseling_score || '-'}</p>
+                          <p className="font-medium">
+                            {check.counseling_score || "-"}
+                          </p>
                         </div>
                         <div>
                           <p className="text-gray-500">Total Time</p>
-                          <p className="font-medium">{check.total_time || '-'}</p>
+                          <p className="font-medium">
+                            {check.total_time || "-"}
+                          </p>
                         </div>
                       </div>
-                      
+
                       {check.counseling_comment && (
                         <div className="mt-3 pt-3 border-t">
-                          <p className="text-sm text-gray-500">Counseling Comment</p>
-                          <p className="text-sm mt-1">{check.counseling_comment}</p>
+                          <p className="text-sm text-gray-500">
+                            Counseling Comment
+                          </p>
+                          <p className="text-sm mt-1">
+                            {check.counseling_comment}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -249,7 +360,10 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
               ) : (
                 <div className="space-y-3">
                   {notes.map((note) => (
-                    <div key={note.id} className="border-l-4 border-teal-600 pl-4 py-2">
+                    <div
+                      key={note.id}
+                      className="border-l-4 border-teal-600 pl-4 py-2"
+                    >
                       <p className="text-sm">{note.note_content}</p>
                       <p className="text-xs text-gray-500 mt-1">
                         {new Date(note.created_at).toLocaleString()}
@@ -263,5 +377,5 @@ export default function CustomerDetails({ customerId, onBack }: CustomerDetailsP
         </div>
       </div>
     </div>
-  )
+  );
 }
