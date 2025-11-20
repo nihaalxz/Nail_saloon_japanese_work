@@ -1,7 +1,6 @@
 import { useState } from "react";
-// 1. Remove `useSupabaseClient` from this import
 import { useSession } from "@supabase/auth-helpers-react";
-// 2. Add the direct import to our typed client
+// Ensure this path points to your actual supabase client instance
 import { supabase } from "@/lib/supabaseClient";
 import Papa from "papaparse";
 import type { Database } from "../../lib/database.types";
@@ -9,19 +8,25 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"; // Assuming you have shadcn/ui table components
 
 // Get the specific TS types from our generated Database types
 type CustomerInsert = Database["public"]["Tables"]["customers"]["Insert"];
 type SkillCheckInsert = Database["public"]["Tables"]["skill_checks"]["Insert"];
 
-// This prop will be a function passed from Dashboard to refresh the table
 interface CsvUploaderProps {
   onUploadComplete: () => void;
   closeDialog: () => void;
 }
 
 // Define the shape of a row from the CSV file.
-// Since PapaParse reads all values as strings by default, we'll type them as such.
 interface CsvRow {
   customer_number?: string;
   name?: string;
@@ -41,22 +46,51 @@ interface CsvRow {
   total_time?: string;
 }
 
+// Helper: Safely parse integers. Returns null if the value is empty or not a number.
+// This prevents "NaN" errors in the database.
+const safeParseInt = (value: string | undefined | null): number | null => {
+  if (!value || value.trim() === "") return null;
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? null : parsed;
+};
+
 export function CsvUploader({
   onUploadComplete,
   closeDialog,
 }: CsvUploaderProps) {
-  // 3. Remove this line. The `supabase` variable now comes from the import.
-  // const supabase = useSupabaseClient<Database>();
   const session = useSession();
   const { toast } = useToast();
 
   const [file, setFile] = useState<File | null>(null);
+  const [previewData, setPreviewData] = useState<CsvRow[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+
+      // Parse immediately for preview (Show first 5 rows)
+      Papa.parse(selectedFile, {
+        header: true,
+        skipEmptyLines: true,
+        preview: 5, // Limit to 5 rows for the preview UI
+        complete: (results) => {
+          // Clean up rows just like we do in the upload
+          const rows = (results.data as CsvRow[]).filter((row) =>
+            Object.values(row).some((val) => val !== null && val !== "")
+          );
+          setPreviewData(rows);
+        },
+        error: (error) => {
+          toast({
+            title: "Error reading file",
+            description: error.message,
+            variant: "destructive",
+          });
+        },
+      });
     }
   };
 
@@ -74,22 +108,21 @@ export function CsvUploader({
     setIsUploading(true);
     setProgress(0);
 
+    // Parse the FULL file for upload
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
-        // Filter out rows that are completely empty or only contain empty strings/nulls.
-        // This prevents processing empty lines at the end of the file.
         const rows = (results.data as CsvRow[]).filter((row) =>
           Object.values(row).some((val) => val !== null && val !== "")
         );
+
         let processedCount = 0;
 
         if (rows.length === 0) {
           toast({
             title: "No Data Found",
-            description:
-              "The CSV file is empty or contains no valid data to process.",
+            description: "The CSV file is empty or contains no valid data.",
             variant: "destructive",
           });
           setIsUploading(false);
@@ -98,32 +131,25 @@ export function CsvUploader({
 
         for (const row of rows) {
           try {
-            // Check for required data
             if (!row.customer_number) {
-              toast({
-                title: "Skipped Row",
-                description: `Skipped row with name "${
-                  row.name || "N/A"
-                }" due to missing 'customer_number'.`,
-                variant: "destructive",
-              });
-              continue; // Skip this row
+              console.warn("Skipped row missing customer_number", row);
+              continue;
             }
 
-            // 1. Prepare Customer Data (from Request #8)
+            // 1. Prepare Customer Data
             const customerData: CustomerInsert = {
               customer_number: row.customer_number,
               name: row.name,
-              age: row.age ? parseInt(row.age, 10) : null,
+              age: safeParseInt(row.age),
               nail_technician_experience: row.nail_technician_experience,
               occupation: row.occupation,
               prefecture: row.prefecture,
               application_date:
                 row.application_date || new Date().toISOString().split("T")[0],
-              status: "New", // Default status
+              status: "New",
             };
 
-            // 2. Find or Create Customer (Upsert)
+            // 2. Upsert Customer
             const { data: customer, error: customerError } = await supabase
               .from("customers")
               .upsert(customerData, {
@@ -132,85 +158,49 @@ export function CsvUploader({
               .select("id")
               .single();
 
-            if (customerError)
-              throw new Error(
-                `Customer upsert error: ${customerError.message}`
-              );
-            // This check is crucial for RLS. If the upsert was blocked, `customer` will be null.
-            if (!customer) {
-              throw new Error(
-                "Failed to upsert customer. Check database permissions (RLS)."
-              );
-            }
+            if (customerError) throw new Error(customerError.message);
+            if (!customer) throw new Error("RLS blocked customer creation.");
 
-            // 3. Prepare Skill Check Data (from Request #21/22)
+            // 3. Prepare Skill Check Data
             const skillCheckData: SkillCheckInsert = {
-              customer_id: customer.id, // Link to the customer
-              imported_by: session.user.id, // Link to admin (Request #14)
+              customer_id: customer.id,
+              imported_by: session.user.id,
               imported_at: new Date().toISOString(),
-
-              // === Assumed CSV headers for scores ===
-              total_score: row.total_score
-                ? parseInt(row.total_score, 10)
-                : null,
+              total_score: safeParseInt(row.total_score),
               rank: row.rank,
               counseling_comment: row.counseling_comment,
-              counseling_score: row.counseling_score
-                ? parseInt(row.counseling_score, 10)
-                : null,
-              filing_score: row.filing_score
-                ? parseInt(row.filing_score, 10)
-                : null,
-              care_score: row.care_score ? parseInt(row.care_score, 10) : null,
-              color_score: row.color_score
-                ? parseInt(row.color_score, 10)
-                : null,
-              art_score: row.art_score ? parseInt(row.art_score, 10) : null,
+              counseling_score: safeParseInt(row.counseling_score),
+              filing_score: safeParseInt(row.filing_score),
+              care_score: safeParseInt(row.care_score),
+              color_score: safeParseInt(row.color_score),
+              art_score: safeParseInt(row.art_score),
               total_time: row.total_time,
             };
 
-            // 4. Insert the new Skill Check
-            const { data: newSkillCheck, error: skillError } = await supabase
+            // 4. Insert Skill Check
+            const { error: skillError } = await supabase
               .from("skill_checks")
-              .insert([skillCheckData])
-              .select() // Add .select() to get the inserted data back
-              .single(); // We expect one row back
+              .insert([skillCheckData]);
 
-            if (skillError)
-              throw new Error(
-                `Skill check insert error: ${skillError.message}`
-              );
-            // This check is also for RLS. If the insert was blocked, `newSkillCheck` will be null.
-            if (!newSkillCheck) {
-              throw new Error(
-                "Failed to insert skill check. Check database permissions (RLS)."
-              );
-            }
+            if (skillError) throw new Error(skillError.message);
           } catch (error: unknown) {
             const errorMessage =
               error instanceof Error ? error.message : String(error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to process row for ${
-                row.name || "N/A"
-              }: ${errorMessage}`,
-              variant: "destructive",
-            });
-            // Continue processing other rows
+            console.error(`Row error (${row.name}):`, errorMessage);
+            // Optional: Toast for individual errors, or just log to console to prevent spam
           }
 
           processedCount++;
           setProgress((processedCount / rows.length) * 100);
         }
 
-        // 5. All done
         setIsUploading(false);
         toast({
           title: "Upload Complete",
           description: `Successfully processed ${processedCount} records.`,
         });
-        onUploadComplete(); // Refresh the dashboard table
-        closeDialog(); // Close the modal
+        onUploadComplete();
+        closeDialog();
       },
       error: (error) => {
         setIsUploading(false);
@@ -224,27 +214,75 @@ export function CsvUploader({
   };
 
   return (
-    <div className="grid gap-4 p-4">
+    <div className="grid gap-6 p-4 max-h-[80vh] overflow-y-auto">
       <div className="space-y-1">
         <h4 className="font-medium">Upload CSV</h4>
         <p className="text-sm text-gray-500">
-          Select a CSV file to import. This will create new skill check records.
+          Select a CSV file to import. Verify the preview data below before
+          uploading.
         </p>
       </div>
-      <Input
-        id="csv-file"
-        type="file"
-        accept=".csv"
-        onChange={handleFileChange}
-        disabled={isUploading}
-      />
-      {isUploading && <Progress value={progress} className="w-full" />}
+
+      <div className="flex gap-2">
+        <Input
+          id="csv-file"
+          type="file"
+          accept=".csv"
+          onChange={handleFileChange}
+          disabled={isUploading}
+        />
+      </div>
+
+      {/* PREVIEW TABLE */}
+      {previewData.length > 0 && (
+        <div className="border rounded-md p-2 bg-slate-50">
+          <p className="text-xs font-semibold mb-2 text-muted-foreground">
+            Preview (First 5 rows):
+          </p>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[100px]">No.</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Rank</TableHead>
+                  <TableHead className="text-right">Total Score</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {previewData.map((row, index) => (
+                  <TableRow key={index}>
+                    <TableCell className="font-medium">
+                      {row.customer_number}
+                    </TableCell>
+                    <TableCell>{row.name}</TableCell>
+                    <TableCell>{row.rank}</TableCell>
+                    <TableCell className="text-right">
+                      {row.total_score}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {isUploading && (
+        <div className="space-y-2">
+          <Progress value={progress} className="w-full" />
+          <p className="text-xs text-center text-muted-foreground">
+            Uploading... {Math.round(progress)}%
+          </p>
+        </div>
+      )}
+
       <Button
         onClick={processUpload}
         disabled={!file || isUploading}
         className="w-full bg-teal-600 hover:bg-teal-700 text-white"
       >
-        {isUploading ? "Uploading..." : "Start Upload"}
+        {isUploading ? "Uploading..." : "Confirm Upload"}
       </Button>
     </div>
   );

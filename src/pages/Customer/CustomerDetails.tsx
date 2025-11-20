@@ -1,14 +1,14 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import type { Database } from "@/lib/database.types";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, ExternalLink, Loader2, Download } from "lucide-react";
+import { ArrowLeft, Loader2, Download, User } from "lucide-react";
+import type { Customer, SkillCheck } from "@/types";
 
-type Customer = Database["public"]["Tables"]["customers"]["Row"];
-type SkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"];
-type CustomerNote = Database["public"]["Tables"]["customer_notes"]["Row"];
+// Import components
+import ComprehensiveTab from "@/components/tabs/ComprehensiveTab";
+import CareTab from "@/components/tabs/CareTab";
+import OneColorTab from "@/components/tabs/OneColorTab";
+import TimeTab from "@/components/tabs/TimeTab";
 
 interface CustomerDetailsProps {
   customerId: number;
@@ -21,125 +21,91 @@ export default function CustomerDetails({
 }: CustomerDetailsProps) {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [skillChecks, setSkillChecks] = useState<SkillCheck[]>([]);
-  const [notes, setNotes] = useState<CustomerNote[]>([]);
   const [loading, setLoading] = useState(true);
-  // FIXED: Moved state inside the component
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<
+    "comprehensive" | "care" | "one color" | "time"
+  >("comprehensive");
+
   useEffect(() => {
-    fetchCustomerData();
+    if (customerId) {
+      fetchCustomerData();
+    }
   }, [customerId]);
 
   const fetchCustomerData = async () => {
     setLoading(true);
-
-    // Fetch customer info
-    const { data: customerData, error: customerError } = await supabase
-      .from("customers")
-      .select("*")
-      .eq("id", customerId)
-      .single();
-
-    if (customerError) {
-      console.error("Error fetching customer:", customerError);
-    } else {
+    try {
+      const { data: customerData, error: customerError } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", customerId)
+        .single();
+      if (customerError) throw customerError;
       setCustomer(customerData);
+
+      const { data: checksData, error: checksError } = await supabase
+        .from("skill_checks")
+        .select("*")
+        .eq("customer_id", customerId)
+        .order("imported_at", { ascending: false });
+      if (checksError) throw checksError;
+      setSkillChecks(checksData || []);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
     }
-
-    // Fetch skill checks
-    const { data: skillData, error: skillError } = await supabase
-      .from("skill_checks")
-      .select("*")
-      .eq("customer_id", customerId)
-      .order("imported_at", { ascending: false });
-
-    if (skillError) {
-      console.error("Error fetching skill checks:", skillError);
-    } else {
-      setSkillChecks(skillData || []);
-    }
-
-    // Fetch notes
-    const { data: notesData, error: notesError } = await supabase
-      .from("customer_notes")
-      .select("*")
-      .eq("customer_id", customerId)
-      .order("created_at", { ascending: false });
-
-    if (notesError) {
-      console.error("Error fetching notes:", notesError);
-    } else {
-      setNotes(notesData || []);
-    }
-
-    setLoading(false);
   };
 
-  // FIXED: Moved function out of fetchCustomerData so it can be used by the button
+  // --- PUPPETEER DOWNLOAD LOGIC ---
   const handleDownloadPDF = async () => {
+    setIsGenerating(true);
     try {
-      setIsGenerating(true);
-
-      // 1. GET SESSION TOKEN
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        alert("You must be logged in to generate a PDF");
-        return;
-      }
-
-      // 2. CALL LOCAL SERVER (Puppeteer Proxy)
-      // Ensure 'node server.js' is running on port 3001
       const response = await fetch(
-        `http://localhost:3001/generate-pdf?id=${customerId}`,
+        `/api/generate-pdf?customerId=${customerId}`,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         }
       );
 
-      if (!response.ok) throw new Error("Server failed to generate PDF");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Server failed to generate PDF");
+      }
 
-      // 3. DOWNLOAD FILE
+      // Handle the binary PDF data
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${customer?.name || "report"}_skill_check.pdf`;
+      const fileName = `${customer?.name || "Customer"}_Report.pdf`;
+      link.setAttribute("download", fileName);
+
       document.body.appendChild(link);
       link.click();
-      link.remove();
+
+      // Cleanup
+      link.parentNode?.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error("PDF Generation Error:", error);
-      alert("Failed to generate PDF. Make sure 'node server.js' is running.");
+      console.error("PDF Download Error:", error);
+      alert("Failed to download PDF. Please check the console for details.");
     } finally {
       setIsGenerating(false);
     }
   };
+  // -------------------------------
 
-  const getStatusBadge = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "in progress":
-        return "bg-teal-100 text-teal-800";
-      case "new":
-        return "bg-red-100 text-red-800";
-      case "completion":
-        return "bg-green-100 text-green-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
+  const currentCheck = skillChecks[0] || null;
+  const previousCheck = skillChecks[1] || null;
 
   if (loading) {
     return (
-      <div className="flex-1 p-8 overflow-auto bg-white">
-        <div className="flex items-center justify-center h-full">
+      <div className="flex-1 p-8 flex items-center justify-center bg-white h-screen">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
           <p className="text-gray-500">Loading customer details...</p>
         </div>
       </div>
@@ -148,232 +114,244 @@ export default function CustomerDetails({
 
   if (!customer) {
     return (
-      <div className="flex-1 p-8 overflow-auto bg-white">
-        <Button onClick={onBack} variant="ghost" className="mb-4">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to List
-        </Button>
-        <p className="text-red-600">Customer not found</p>
+      <div className="p-8 text-red-500">
+        Customer not found. Please check the ID.
       </div>
     );
   }
 
   return (
-    <div className="flex-1 p-8 overflow-auto bg-gray-50">
-      {/* Header */}
-      <div className="mb-6">
-        <Button onClick={onBack} variant="ghost" className="mb-4">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to List
-        </Button>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-800">
-              {customer.name}
-            </h1>
-            <p className="text-gray-500">
-              Customer #{customer.customer_number}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* PDF BUTTON ADDED HERE */}
-            <Button
-              onClick={handleDownloadPDF}
-              disabled={isGenerating}
-              variant="outline"
-              className="bg-white border-teal-200 text-teal-700 hover:bg-teal-50"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4 mr-2" />
-                  Save as PDF
-                </>
-              )}
-            </Button>
-
-            <Badge
-              className={`capitalize text-sm px-3 py-1 ${getStatusBadge(
-                customer.status
-              )}`}
-            >
-              {customer.status}
-            </Badge>
-          </div>
+    <div className="flex-1 bg-[#FFF5F5] min-h-screen font-sans text-slate-600 pb-12">
+      {/* Top Navigation Bar */}
+      <div className="bg-white/50 px-8 py-4 flex items-center justify-between sticky top-0 z-10 backdrop-blur-sm border-b border-pink-100 print:hidden">
+        <div className="flex items-center gap-4">
+          <Button
+            onClick={onBack}
+            variant="ghost"
+            className="text-gray-500 hover:bg-white hover:text-teal-600"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" /> Back
+          </Button>
+          <h1 className="font-bold text-gray-700">Basic skill check</h1>
+        </div>
+        <div className="h-8 w-8 bg-white rounded-full flex items-center justify-center shadow-sm text-gray-300">
+          <User size={16} />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Customer Info */}
-        <div className="lg:col-span-1 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Basic Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-500">Age</p>
-                <p className="font-medium">{customer.age || "N/A"}</p>
+      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8">
+        {/* Header Section */}
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
+          <div className="space-y-2 w-full lg:w-auto">
+            <p className="text-teal-500 font-medium text-xs tracking-wider uppercase">
+              Basic Nail Skills Check
+            </p>
+            <h2 className="text-4xl font-bold text-gray-800">
+              {customer.name || "Unknown Name"}
+            </h2>
+            <div className="flex items-center gap-6 text-xs text-gray-500 font-mono pt-1">
+              <span>ID: {customer.customer_number || "---"}</span>
+              <span>
+                Scoring date:{" "}
+                {currentCheck?.imported_at
+                  ? new Date(currentCheck.imported_at).toLocaleDateString(
+                      "ja-JP"
+                    )
+                  : "N/A"}
+              </span>
+            </div>
+            <div className="pt-4 print:hidden">
+              <Button
+                onClick={handleDownloadPDF}
+                disabled={isGenerating}
+                className="bg-teal-600 hover:bg-teal-700 text-white h-9 text-xs shadow-sm"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-3 w-3 mr-2" /> Save as PDF
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4">
+            <div className="bg-[#FFB7B2] bg-opacity-30 border border-[#FFB7B2] rounded-xl p-1.5 min-w-[220px] shadow-sm">
+              <div className="bg-[#FF9E9E] text-white text-center py-1 rounded-t-lg text-xs font-bold uppercase tracking-wider">
+                Score
               </div>
-              <div>
-                <p className="text-sm text-gray-500">Prefecture</p>
-                <p className="font-medium">{customer.prefecture || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Occupation</p>
-                <p className="font-medium">{customer.occupation || "N/A"}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">
-                  Nail Technician Experience
-                </p>
-                <p className="font-medium">
-                  {customer.nail_technician_experience || "N/A"}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Application Date</p>
-                <p className="font-medium">
-                  {customer.application_date || "N/A"}
-                </p>
-              </div>
-              {customer.google_drive_url && (
-                <div>
-                  <p className="text-sm text-gray-500 mb-1">Documents</p>
-                  <a
-                    href={customer.google_drive_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-teal-600 hover:text-teal-700 flex items-center text-sm"
-                  >
-                    Open Google Drive
-                    <ExternalLink className="h-3 w-3 ml-1" />
-                  </a>
+              <div className="bg-white h-24 flex items-center justify-center rounded-b-lg">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-[#FF8FA3] text-4xl font-bold tracking-tighter">
+                    {currentCheck?.total_score || 0}
+                  </span>
+                  <span className="text-gray-300 text-sm font-medium">
+                    /1320
+                  </span>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            </div>
+            <div className="bg-[#FFB7B2] bg-opacity-30 border border-[#FFB7B2] rounded-xl p-1.5 min-w-[180px] shadow-sm">
+              <div className="bg-[#FF9E9E] text-white text-center py-1 rounded-t-lg text-xs font-bold uppercase tracking-wider">
+                Evaluation Rank
+              </div>
+              <div className="bg-white h-24 flex items-center justify-center rounded-b-lg">
+                <div className="flex items-center gap-2">
+                  <span className="text-[#FF8FA3] text-2xl">♕</span>
+                  <span className="text-[#FF8FA3] text-4xl font-bold">
+                    {currentCheck?.rank || "-"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Right Column - Skill Checks and Notes */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Skill Checks */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Skill Check Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {skillChecks.length === 0 ? (
-                <p className="text-gray-500 text-sm">
-                  No skill checks recorded yet.
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {skillChecks.map((check) => (
-                    <div
-                      key={check.id}
-                      className="border rounded-lg p-4 bg-gray-50"
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <p className="font-semibold text-lg">
-                            Total Score: {check.total_score || "N/A"}
-                          </p>
-                          {check.rank && (
-                            <Badge className="mt-1">{check.rank}</Badge>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-500">
-                          {new Date(check.imported_at).toLocaleDateString()}
-                        </p>
-                      </div>
+        {/* Main Content Card */}
+        <div className="bg-white rounded-[2rem] shadow-sm p-6 md:p-10 relative overflow-hidden">
+          <div className="flex gap-3 mb-8 overflow-x-auto pb-2 print:hidden">
+            {(["comprehensive", "care", "one color", "time"] as const).map(
+              (tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-6 py-1.5 rounded-sm text-xs font-bold transition-colors uppercase tracking-wide 
+                  ${
+                    activeTab === tab
+                      ? "bg-white text-teal-500 border-b-2 border-teal-400 shadow-sm"
+                      : "bg-gray-100 text-gray-400 hover:bg-gray-200 border-b-2 border-transparent"
+                  }`}
+                >
+                  {tab}
+                </button>
+              )
+            )}
+          </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                        <div>
-                          <p className="text-gray-500">Filing</p>
-                          <p className="font-medium">
-                            {check.filing_score || "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Care</p>
-                          <p className="font-medium">
-                            {check.care_score || "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Color</p>
-                          <p className="font-medium">
-                            {check.color_score || "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Art</p>
-                          <p className="font-medium">
-                            {check.art_score || "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Counseling</p>
-                          <p className="font-medium">
-                            {check.counseling_score || "-"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Total Time</p>
-                          <p className="font-medium">
-                            {check.total_time || "-"}
-                          </p>
-                        </div>
-                      </div>
+          {activeTab === "comprehensive" && (
+            <ComprehensiveTab
+              currentCheck={currentCheck}
+              previousCheck={previousCheck}
+            />
+          )}
+          {activeTab === "care" && (
+            <CareTab
+              currentCheck={currentCheck}
+              previousCheck={previousCheck}
+            />
+          )}
+          {activeTab === "one color" && (
+            <OneColorTab
+              currentCheck={currentCheck}
+              previousCheck={previousCheck}
+            />
+          )}
+          {activeTab === "time" && (
+            <TimeTab
+              currentCheck={currentCheck}
+              previousCheck={previousCheck}
+            />
+          )}
+        </div>
 
-                      {check.counseling_comment && (
-                        <div className="mt-3 pt-3 border-t">
-                          <p className="text-sm text-gray-500">
-                            Counseling Comment
-                          </p>
-                          <p className="text-sm mt-1">
-                            {check.counseling_comment}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Notes */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Notes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {notes.length === 0 ? (
-                <p className="text-gray-500 text-sm">No notes yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {notes.map((note) => (
-                    <div
-                      key={note.id}
-                      className="border-l-4 border-teal-600 pl-4 py-2"
-                    >
-                      <p className="text-sm">{note.note_content}</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {new Date(note.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {/* Footer Explainer Tables */}
+        <div className="space-y-8 pb-12">
+          <div className="bg-white rounded-xl p-6 shadow-sm">
+            <h3 className="font-bold text-gray-600 text-sm mb-3">
+              Evaluation rank explanation
+            </h3>
+            <div className="border border-gray-200 rounded-sm overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-[#E5E5E5] text-gray-600">
+                  <tr>
+                    <th className="py-2 px-4 text-center w-32 border-r border-gray-300">
+                      Evaluation rank
+                    </th>
+                    <th className="py-2 px-4 text-center">explanation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-gray-600 text-center">
+                  <tr>
+                    <td className="py-3 font-bold bg-gray-50 border-r">AAA</td>
+                    <td>There will be an explanation</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 font-bold bg-gray-50 border-r">A.A.</td>
+                    <td>There will be an explanation</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 font-bold bg-gray-50 border-r">A</td>
+                    <td>There will be an explanation</td>
+                  </tr>
+                  <tr>
+                    <td className="py-3 font-bold bg-gray-50 border-r">B</td>
+                    <td>There will be an explanation</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-6 shadow-sm">
+            <h3 className="font-bold text-gray-600 text-sm mb-3">
+              Evaluation rank criteria table
+            </h3>
+            <div className="border border-gray-200 rounded-sm overflow-hidden overflow-x-auto">
+              <table className="w-full text-xs text-center text-gray-600">
+                <thead className="bg-[#E5E5E5]">
+                  <tr>
+                    <th className="py-2 px-4 border-r border-gray-300">
+                      Evaluation rank
+                    </th>
+                    <th className="py-2 px-4 border-r border-gray-300 bg-[#D8D8D8]">
+                      comprehensive
+                    </th>
+                    <th className="py-2 px-4 border-r border-gray-300 bg-[#D8D8D8]">
+                      care
+                    </th>
+                    <th className="py-2 px-4 border-r border-gray-300 bg-[#D8D8D8]">
+                      one color
+                    </th>
+                    <th className="py-2 px-4 bg-[#D8D8D8]">time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="py-2 font-bold border-r">AAA</td>
+                    <td className="border-r">1123 ~ 1320</td>
+                    <td className="border-r">349 ~ 410</td>
+                    <td className="border-r">519 ~ 610</td>
+                    <td>~ 60 min</td>
+                  </tr>
+                  <tr className="bg-gray-50">
+                    <td className="py-2 font-bold border-r">A.A.</td>
+                    <td className="border-r">958 ~ 1122</td>
+                    <td className="border-r">298 ~ 348</td>
+                    <td className="border-r">443 ~ 518</td>
+                    <td>60 ~ 75 min</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 font-bold border-r">A</td>
+                    <td className="border-r">793 ~ 957</td>
+                    <td className="border-r">246 ~ 297</td>
+                    <td className="border-r">367 ~ 442</td>
+                    <td>75 ~ 90 min</td>
+                  </tr>
+                  <tr className="bg-gray-50">
+                    <td className="py-2 font-bold border-r">B</td>
+                    <td className="border-r">~ 792</td>
+                    <td className="border-r">~ 245</td>
+                    <td className="border-r">~ 366</td>
+                    <td>90 min ~</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
