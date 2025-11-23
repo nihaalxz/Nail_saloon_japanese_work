@@ -44,6 +44,26 @@ interface CsvRow {
   color_score?: string;
   art_score?: string;
   total_time?: string;
+  // --- NEW FIELDS ADDED BELOW ---
+  time_off_fill?: string;
+  time_preparation?: string;
+  time_one_color?: string;
+  time_top_finish?: string;
+  color_base_score?: string;
+  color_cuticle_score?: string;
+  color_apex_score?: string;
+  color_saturation_score?: string;
+  color_edge_score?: string;
+  care_shearling_score?: string;
+  care_off_finish_score?: string;
+  care_file_finish_score?: string;
+  care_shape_score?: string;
+  care_side_score?: string;
+  care_symmetry_score?: string;
+  care_push_score?: string;
+  care_loose_cuticle_score?: string;
+  care_nipper_score?: string;
+  time_score?: string;
 }
 
 // Helper: Safely parse integers. Returns null if the value is empty or not a number.
@@ -53,7 +73,33 @@ const safeParseInt = (value: string | undefined | null): number | null => {
   const parsed = parseInt(value, 10);
   return isNaN(parsed) ? null : parsed;
 };
+// Helper: Convert DD-MM-YYYY or DD/MM/YYYY to YYYY-MM-DD
+const formatDate = (dateStr: string | undefined | null): string => {
+  if (!dateStr) return new Date().toISOString().split("T")[0]; // Default to today if empty
 
+  // 1. Handle DD-MM-YYYY or DD/MM/YYYY
+  // Regex looks for: (1 or 2 digits) -or/ (1 or 2 digits) -or/ (4 digits)
+  const match = dateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+
+  if (match) {
+    const [, day, month, year] = match;
+    // Return YYYY-MM-DD
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  // 2. Handle existing YYYY-MM-DD (if some rows are already correct)
+  const isoMatch = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
+  if (isoMatch) return dateStr;
+
+  // 3. Fallback: Try standard JS parsing, or return today if invalid
+  const date = new Date(dateStr);
+  if (!isNaN(date.getTime())) {
+    return date.toISOString().split("T")[0];
+  }
+
+  console.warn(`Invalid date format: ${dateStr}, defaulting to today.`);
+  return new Date().toISOString().split("T")[0];
+};
 export function CsvUploader({
   onUploadComplete,
   closeDialog,
@@ -144,9 +190,13 @@ export function CsvUploader({
               nail_technician_experience: row.nail_technician_experience,
               occupation: row.occupation,
               prefecture: row.prefecture,
-              application_date:
-                row.application_date || new Date().toISOString().split("T")[0],
+              application_date: formatDate(row.application_date),
               status: "New",
+              // Fix: Map these to the row instead of null
+              time_off_fill: safeParseInt(row.time_off_fill),
+              time_preparation: safeParseInt(row.time_preparation),
+              time_one_color: safeParseInt(row.time_one_color),
+              time_top_finish: safeParseInt(row.time_top_finish),
             };
 
             // 2. Upsert Customer
@@ -175,6 +225,24 @@ export function CsvUploader({
               color_score: safeParseInt(row.color_score),
               art_score: safeParseInt(row.art_score),
               total_time: row.total_time,
+              // Fix: Map these detailed scores to the row instead of null
+              color_base_score: safeParseInt(row.color_base_score),
+              color_cuticle_score: safeParseInt(row.color_cuticle_score),
+              color_apex_score: safeParseInt(row.color_apex_score),
+              color_saturation_score: safeParseInt(row.color_saturation_score),
+              color_edge_score: safeParseInt(row.color_edge_score),
+              care_shearling_score: safeParseInt(row.care_shearling_score),
+              care_off_finish_score: safeParseInt(row.care_off_finish_score),
+              care_file_finish_score: safeParseInt(row.care_file_finish_score),
+              care_shape_score: safeParseInt(row.care_shape_score),
+              care_side_score: safeParseInt(row.care_side_score),
+              care_symmetry_score: safeParseInt(row.care_symmetry_score),
+              care_push_score: safeParseInt(row.care_push_score),
+              care_loose_cuticle_score: safeParseInt(
+                row.care_loose_cuticle_score
+              ),
+              care_nipper_score: safeParseInt(row.care_nipper_score),
+              time_score: safeParseInt(row.time_score),
             };
 
             // 4. Insert Skill Check

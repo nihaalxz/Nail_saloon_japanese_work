@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useRef, useLayoutEffect } from "react";
 import {
   Radar,
   RadarChart,
@@ -8,24 +8,35 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { ArrowUp, ArrowDown, Minus, Star, MoveRight } from "lucide-react";
-
 import type { Database } from "./../../lib/database.types";
 
-type SkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"] & {
-  color_base_score?: number | null;
-  color_cuticle_score?: number | null;
-  color_apex_score?: number | null;
-  color_saturation_score?: number | null;
-  color_edge_score?: number | null;
-};
+// --- TYPES ---
+type BaseSkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"];
+
+interface SkillCheck extends BaseSkillCheck {
+  [key: string]: unknown;
+}
 
 interface TabProps {
   currentCheck: SkillCheck | null;
   previousCheck: SkillCheck | null;
 }
 
-const ONE_COLOR_TABLE_STRUCTURE = [
-  // === CATEGORY: BASE (12 Rows) ===
+interface OneColorTableItem {
+  category?: string;
+  catSpan?: number;
+  item?: string;
+  itemSpan?: number;
+  id: string;
+  label: string;
+  allocation: number;
+  required?: boolean;
+  key: keyof SkillCheck;
+}
+
+// --- DATA STRUCTURE ---
+const ONE_COLOR_TABLE_STRUCTURE: OneColorTableItem[] = [
+  // === CATEGORY: BASE (14-19) ===
   {
     category: "base",
     catSpan: 12,
@@ -35,91 +46,91 @@ const ONE_COLOR_TABLE_STRUCTURE = [
     label: "Too much scraping",
     allocation: 10,
     required: true,
-    dbKey: "color_base_score",
+    key: "color_14_1",
   },
   {
     id: "14-2",
     label: "Insufficient cutting",
     allocation: 20,
     required: true,
-    dbKey: "color_base_score",
+    key: "color_14_2",
   },
-
   {
     item: "15. Cuticle line",
     itemSpan: 2,
     id: "15-1",
     label: "remaining gel",
     allocation: 20,
-    dbKey: "color_cuticle_score",
+    key: "color_15_1",
   },
   {
     id: "15-2",
     label: "root step",
     allocation: 10,
     required: true,
-    dbKey: "color_cuticle_score",
+    key: "color_15_2",
   },
-
   {
     item: "16. corner",
     itemSpan: 2,
     id: "16-1",
     label: "Too much scraping",
     allocation: 10,
-    dbKey: "color_base_score",
+    key: "color_16_1",
   },
   {
     id: "16-2",
     label: "Insufficient cutting",
     allocation: 20,
     required: true,
-    dbKey: "color_base_score",
+    key: "color_16_2",
   },
-
   {
     item: "17. side",
     itemSpan: 2,
     id: "17-1",
     label: "remaining gel",
     allocation: 10,
-    dbKey: "color_base_score",
+    key: "color_17_1",
   },
   {
     id: "17-2",
     label: "root step",
     allocation: 20,
     required: true,
-    dbKey: "color_base_score",
+    key: "color_17_2",
   },
-
   {
     item: "18. High Point",
     itemSpan: 2,
     id: "18-1",
     label: "Too much scraping",
     allocation: 20,
-    dbKey: "color_base_score",
+    key: "color_18_1",
   },
   {
     id: "18-2",
     label: "Insufficient cutting",
     allocation: 30,
     required: true,
-    dbKey: "color_base_score",
+    key: "color_18_2",
   },
-
   {
     item: "19. Tamari dent",
     itemSpan: 2,
     id: "19-1",
     label: "remaining gel",
     allocation: 10,
-    dbKey: "color_base_score",
+    key: "color_19_1",
   },
-  { id: "19-2", label: "root step", allocation: 20, dbKey: "color_base_score" },
+  {
+    id: "19-2",
+    label: "root step",
+    allocation: 20,
+    key: "color_19_2",
+  },
 
-  // === CATEGORY: COLOR (13 Rows) ===
+  // === CATEGORY: COLOR (20-25) ===
   {
     category: "color",
     catSpan: 13,
@@ -128,92 +139,87 @@ const ONE_COLOR_TABLE_STRUCTURE = [
     id: "20-1",
     label: "Too much scraping",
     allocation: 20,
-    dbKey: "color_cuticle_score",
+    key: "color_20_1",
   },
   {
     id: "20-2",
     label: "Insufficient cutting",
     allocation: 30,
     required: true,
-    dbKey: "color_cuticle_score",
+    key: "color_20_2",
   },
-
   {
     item: "21. Right corner",
     itemSpan: 2,
     id: "21-1",
     label: "remaining gel",
     allocation: 30,
-    dbKey: "color_saturation_score",
+    key: "color_21_1",
   },
   {
     id: "21-2",
     label: "root step",
     allocation: 10,
     required: true,
-    dbKey: "color_saturation_score",
+    key: "color_21_2",
   },
-
   {
     item: "22. left corner",
     itemSpan: 2,
     id: "22-1",
     label: "Too much scraping",
     allocation: 10,
-    dbKey: "color_saturation_score",
+    key: "color_22_1",
   },
   {
     id: "22-2",
     label: "Insufficient cutting",
     allocation: 20,
     required: true,
-    dbKey: "color_saturation_score",
+    key: "color_22_2",
   },
-
   {
     item: "23. Right side",
     itemSpan: 2,
     id: "23-1",
     label: "remaining gel",
     allocation: 20,
-    dbKey: "color_saturation_score",
+    key: "color_23_1",
   },
   {
     id: "23-2",
     label: "root step",
     allocation: 20,
     required: true,
-    dbKey: "color_saturation_score",
+    key: "color_23_2",
   },
-
   {
     item: "24. left side",
     itemSpan: 2,
     id: "24-1",
     label: "Too much scraping",
     allocation: 20,
-    dbKey: "color_saturation_score",
+    key: "color_24_1",
   },
   {
     id: "24-2",
     label: "Insufficient cutting",
     allocation: 10,
     required: true,
-    dbKey: "color_saturation_score",
+    key: "color_24_2",
   },
-
   {
     item: "25. edge",
     itemSpan: 3,
     id: "25-1",
     label: "remaining gel",
     allocation: 10,
-    dbKey: "color_edge_score",
+    key: "color_25_1",
   },
-  { id: "25-2", label: "root step", allocation: 10, dbKey: "color_edge_score" },
-  { id: "25-3", label: "underflow", allocation: 20, dbKey: "color_edge_score" },
+  { id: "25-2", label: "root step", allocation: 10, key: "color_25_2" },
+  { id: "25-3", label: "underflow", allocation: 20, key: "color_25_3" },
 
-  // === CATEGORY: TOP (8 Rows) ===
+  // === CATEGORY: TOP (26-28) ===
   {
     category: "top",
     catSpan: 8,
@@ -222,37 +228,35 @@ const ONE_COLOR_TABLE_STRUCTURE = [
     id: "26-1",
     label: "Too much scraping",
     allocation: 10,
-    dbKey: "color_apex_score",
+    key: "color_26_1",
   },
   {
     id: "26-2",
     label: "Insufficient cutting",
     allocation: 20,
-    dbKey: "color_apex_score",
+    key: "color_26_2",
   },
-
   {
     item: "27. Tamari dent",
     itemSpan: 4,
     id: "27-1",
     label: "remaining gel",
     allocation: 10,
-    dbKey: "color_apex_score",
+    key: "color_27_1",
   },
-  { id: "27-2", label: "root step", allocation: 10, dbKey: "color_apex_score" },
+  { id: "27-2", label: "root step", allocation: 10, key: "color_27_2" },
   {
     id: "27-3",
     label: "Too much scraping",
     allocation: 10,
-    dbKey: "color_apex_score",
+    key: "color_27_3",
   },
   {
     id: "27-4",
     label: "Insufficient cutting",
     allocation: 10,
-    dbKey: "color_apex_score",
+    key: "color_27_4",
   },
-
   {
     item: "28. protrusion",
     itemSpan: 2,
@@ -260,21 +264,24 @@ const ONE_COLOR_TABLE_STRUCTURE = [
     label: "cuticle line",
     allocation: 10,
     required: true,
-    dbKey: "color_apex_score",
+    key: "color_28_1",
   },
   {
     id: "28-2",
     label: "corner side",
     allocation: 20,
     required: true,
-    dbKey: "color_apex_score",
+    key: "color_28_2",
   },
 ];
 
 // --- HELPERS ---
 const renderTrend = (current: number, target: number) => {
-  if (!current || !target)
+  if (current == null || target == null)
     return <Minus className="w-3 h-3 text-gray-300 mx-auto" />;
+  if (target === 0 && current > 0)
+    return <Minus className="w-3 h-3 text-gray-300 mx-auto" />;
+
   if (current > target)
     return <ArrowUp className="w-3 h-3 text-blue-500 mx-auto" />;
   if (current < target)
@@ -282,39 +289,89 @@ const renderTrend = (current: number, target: number) => {
   return <MoveRight className="w-3 h-3 text-green-500 mx-auto" />;
 };
 
-// --- CUSTOM TICK COMPONENT ---
+const calculateSum = (
+  data: SkillCheck | null,
+  rangeStart: number,
+  rangeEnd: number
+) => {
+  if (!data) return 0;
+  let sum = 0;
+  ONE_COLOR_TABLE_STRUCTURE.forEach((row) => {
+    const mainId = parseInt(row.id.split("-")[0], 10);
+    if (mainId >= rangeStart && mainId <= rangeEnd) {
+      const raw = data[row.key];
+      const n = raw == null ? 0 : Number(raw);
+      sum += Number.isFinite(n) ? n : 0;
+    }
+  });
+  return sum;
+};
+
+const calculateMaxScore = (rangeStart: number, rangeEnd: number) => {
+  let sum = 0;
+  ONE_COLOR_TABLE_STRUCTURE.forEach((row) => {
+    const mainId = parseInt(row.id.split("-")[0], 10);
+    if (mainId >= rangeStart && mainId <= rangeEnd) {
+      sum += row.allocation;
+    }
+  });
+  return sum;
+};
+
+const calculateTotal = (data: SkillCheck | null) => {
+  if (!data) return 0;
+  let sum = 0;
+  let hasBreakdownData = false;
+  ONE_COLOR_TABLE_STRUCTURE.forEach((row) => {
+    const raw = data[row.key];
+    if (raw != null) {
+      hasBreakdownData = true;
+      const n = Number(raw);
+      sum += Number.isFinite(n) ? n : 0;
+    }
+  });
+  if (hasBreakdownData && sum > 0) return sum;
+  if (typeof data.color_score === "number") return data.color_score;
+  if (typeof data.total_score === "number") return data.total_score;
+  return 0;
+};
+
+const getPercentage = (
+  check: SkillCheck | null,
+  key: keyof SkillCheck,
+  allocation: number
+) => {
+  if (!check || !allocation) return 0;
+  const val = check[key] != null ? Number(check[key]) : 0;
+  const score = Math.min(val, allocation);
+  return (score / allocation) * 100;
+};
+
+// --- CUSTOM TICK FOR RADAR ---
 interface CustomTickProps {
   x?: number | string;
   y?: number | string;
-  payload?: {
-    value: string;
-  };
+  payload?: { value: string };
 }
-
 const CustomAxisTick = ({ x, y, payload }: CustomTickProps) => {
   if (!payload) return <g />;
   const { value } = payload;
   const absX = Number(x) || 0;
   const absY = Number(y) || 0;
-
   let textAnchor: "middle" | "start" | "end" = "middle";
   let dy = 0;
   let dx = 0;
-
-  // Axes Positioning Logic
   if (value === "comprehensive") {
-    dy = -25; // Push Up
+    dy = -25;
   } else if (value === "One color (color)") {
-    dy = 25; // Push Down
+    dy = 25;
   } else if (value === "One color (top)") {
     textAnchor = "end";
-    dx = -30; // Push Left
+    dx = -30;
   } else {
-    // "One color (base)"
     textAnchor = "start";
-    dx = 30; // Push Right
+    dx = 30;
   }
-
   return (
     <g transform={`translate(${absX},${absY})`}>
       <text
@@ -331,102 +388,136 @@ const CustomAxisTick = ({ x, y, payload }: CustomTickProps) => {
   );
 };
 
+// --- MAIN COMPONENT ---
 export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
+  // Use container ref for calculating coordinates
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svgPath, setSvgPath] = useState("");
+
+  const allPercentages = useMemo(() => {
+    return ONE_COLOR_TABLE_STRUCTURE.map((row) =>
+      getPercentage(currentCheck, row.key, row.allocation)
+    );
+  }, [currentCheck]);
+
+  // Recalculate line path whenever data or window size changes
+  useLayoutEffect(() => {
+    const updatePath = () => {
+      if (!containerRef.current) return;
+
+      const dots = containerRef.current.querySelectorAll(".graph-dot-marker");
+      if (dots.length === 0) return;
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const points: { x: number; y: number }[] = [];
+
+      dots.forEach((dot) => {
+        const rect = dot.getBoundingClientRect();
+        // Calculate center of dot relative to container
+        const x = rect.left - containerRect.left + rect.width / 2;
+        const y = rect.top - containerRect.top + rect.height / 2;
+        points.push({ x, y });
+      });
+
+      const path = points.reduce(
+        (acc, p, index) =>
+          index === 0 ? `M ${p.x},${p.y}` : `${acc} L ${p.x},${p.y}`,
+        ""
+      );
+      setSvgPath(path);
+    };
+
+    // Initial calculation
+    // Small timeout ensures the layout is fully settled
+    const timeoutId = setTimeout(updatePath, 50);
+
+    window.addEventListener("resize", updatePath);
+    return () => {
+      window.removeEventListener("resize", updatePath);
+      clearTimeout(timeoutId);
+    };
+  }, [allPercentages]);
+
   const chartData = useMemo(() => {
-    if (!currentCheck) return [];
-    const val = (key: keyof SkillCheck) => (currentCheck[key] as number) || 0;
+    const maxBase = calculateMaxScore(14, 19);
+    const maxColor = calculateMaxScore(20, 25);
+    const maxTop = calculateMaxScore(26, 28);
+    const maxTotal = maxBase + maxColor + maxTop;
 
-    // --- 1. Top Axis: Comprehensive (Total) ---
-    // Total One Color Score Max is approx 610
-    const totalScore = currentCheck.color_score || 0;
+    const currBase = calculateSum(currentCheck, 14, 19);
+    const currColor = calculateSum(currentCheck, 20, 25);
+    const currTop = calculateSum(currentCheck, 26, 28);
+    const currTotal = currBase + currColor + currTop;
 
-    // --- 2. Right Axis: Base ---
-    // Sum of all 'base' category rows ~ 200 points
-    const baseScore = val("color_base_score") + val("color_cuticle_score");
-
-    // --- 3. Bottom Axis: Color ---
-    // Sum of all 'color' category rows ~ 230 points
-    const colorScore = val("color_saturation_score") + val("color_edge_score");
-
-    // --- 4. Left Axis: Top ---
-    // Sum of all 'top' category rows ~ 180 points
-    const topScore = val("color_apex_score");
+    const prevBase = calculateSum(previousCheck, 14, 19);
+    const prevColor = calculateSum(previousCheck, 20, 25);
+    const prevTop = calculateSum(previousCheck, 26, 28);
+    const prevTotal = prevBase + prevColor + prevTop;
 
     return [
-      { subject: "comprehensive", A: (totalScore / 610) * 100, fullMark: 100 },
+      {
+        subject: "comprehensive",
+        current: maxTotal > 0 ? (currTotal / maxTotal) * 100 : 0,
+        prev: maxTotal > 0 ? (prevTotal / maxTotal) * 100 : 0,
+        fullMark: 100,
+      },
       {
         subject: "One color (base)",
-        A: (baseScore / 200) * 100,
+        current: maxBase > 0 ? (currBase / maxBase) * 100 : 0,
+        prev: maxBase > 0 ? (prevBase / maxBase) * 100 : 0,
         fullMark: 100,
       },
       {
         subject: "One color (color)",
-        A: (colorScore / 230) * 100,
+        current: maxColor > 0 ? (currColor / maxColor) * 100 : 0,
+        prev: maxColor > 0 ? (prevColor / maxColor) * 100 : 0,
         fullMark: 100,
       },
-      { subject: "One color (top)", A: (topScore / 180) * 100, fullMark: 100 },
+      {
+        subject: "One color (top)",
+        current: maxTop > 0 ? (currTop / maxTop) * 100 : 0,
+        prev: maxTop > 0 ? (prevTop / maxTop) * 100 : 0,
+        fullMark: 100,
+      },
     ];
-  }, [currentCheck]);
+  }, [currentCheck, previousCheck]);
 
-  // --- CUSTOM GRID LABELS (EXACT NUMBERS) ---
+  const thisTotal = useMemo(() => calculateTotal(currentCheck), [currentCheck]);
+  const prevTotal = useMemo(
+    () => calculateTotal(previousCheck),
+    [previousCheck]
+  );
+  const dynamicTotalMax = useMemo(() => calculateMaxScore(14, 28), []);
+
+  const getRank = (score: number, max: number) => {
+    const pct = (score / max) * 100;
+    if (pct >= 90) return "AAA";
+    if (pct >= 80) return "A.A.";
+    if (pct >= 70) return "A";
+    return "B";
+  };
+
   const CustomGridLabels = () => {
+    const maxBase = calculateMaxScore(14, 19);
+    const maxColor = calculateMaxScore(20, 25);
+    const maxTop = calculateMaxScore(26, 28);
+    const maxTotal = maxBase + maxColor + maxTop;
+
     return (
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
         <div className="relative w-[80%] h-[80%]">
-          {/* TOP AXIS (610 Scale) */}
-          <span className="absolute top-[37%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            250
-          </span>
-          <span className="absolute top-[25%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            400
-          </span>
-          <span className="absolute top-[12%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            550
-          </span>
           <span className="absolute top-[-1%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            610
-          </span>
-
-          {/* RIGHT AXIS (Base - 200 Scale) */}
-          <span className="absolute top-1/2 left-[62%] text-[9px] text-gray-500 bg-white px-0.5">
-            50
-          </span>
-          <span className="absolute top-1/2 left-[74%] text-[9px] text-gray-500 bg-white px-0.5">
-            100
-          </span>
-          <span className="absolute top-1/2 left-[87%] text-[9px] text-gray-500 bg-white px-0.5">
-            150
+            {maxTotal}
           </span>
           <span className="absolute top-1/2 right-[0%] text-[9px] text-gray-500 bg-white px-0.5">
-            200
-          </span>
-
-          {/* BOTTOM AXIS (Color - 230 Scale) */}
-          <span className="absolute bottom-[37%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            60
-          </span>
-          <span className="absolute bottom-[25%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            120
+            {maxBase}
           </span>
           <span className="absolute bottom-[-1%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            230
-          </span>
-
-          {/* LEFT AXIS (Top - 180 Scale) */}
-          <span className="absolute top-1/2 right-[62%] text-[9px] text-gray-500 bg-white px-0.5">
-            45
-          </span>
-          <span className="absolute top-1/2 right-[74%] text-[9px] text-gray-500 bg-white px-0.5">
-            90
-          </span>
-          <span className="absolute top-1/2 right-[87%] text-[9px] text-gray-500 bg-white px-0.5">
-            135
+            {maxColor}
           </span>
           <span className="absolute top-1/2 left-[0%] text-[9px] text-gray-500 bg-white px-0.5">
-            180
+            {maxTop}
           </span>
-
-          {/* CENTER */}
           <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] text-gray-500">
             0
           </span>
@@ -478,24 +569,57 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               <td className="bg-[#6AC2DB] text-white py-4">one color</td>
               <td className="text-teal-600">A</td>
               <td className="text-teal-600">
-                267
-                <span className="text-gray-400 text-xs font-normal">/610</span>
+                {Math.round(dynamicTotalMax * 0.44)}
+                <span className="text-gray-400 text-xs font-normal">
+                  /{dynamicTotalMax}
+                </span>
               </td>
-              <td className="bg-[#D9D9D9] text-gray-400 border-r border-white"></td>
-              <td className="bg-[#D9D9D9] text-gray-400 border-r border-white"></td>
-              <td className="text-red-500">A.A.</td>
-              <td className="text-red-500">
-                {currentCheck?.color_score || 0}
-                <span className="text-gray-400 text-xs font-normal">/610</span>
+              <td className="text-blue-600 bg-[#F2F6FA] border-r border-white">
+                {getRank(prevTotal, dynamicTotalMax)}
+              </td>
+              <td className="text-blue-600 bg-[#F2F6FA] border-r border-white">
+                {prevTotal}
+                <span className="text-gray-400 text-xs font-normal">
+                  /{dynamicTotalMax}
+                </span>
+              </td>
+              <td className="text-red-500 bg-[#FFF5F7]">
+                {getRank(thisTotal, dynamicTotalMax)}
+              </td>
+              <td className="text-red-500 bg-[#FFF5F7]">
+                {thisTotal}
+                <span className="text-gray-400 text-xs font-normal">
+                  /{dynamicTotalMax}
+                </span>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* Detailed Table - Fixed Layout */}
-      <div className="rounded-sm border border-teal-100 shadow-sm bg-white">
-        <table className="w-full table-fixed text-[10px] text-center border-collapse">
+      {/* Detailed Table Container */}
+      {/* We use 'relative' here so the absolute SVG is positioned relative to this box */}
+      <div
+        ref={containerRef}
+        className="relative rounded-sm border border-teal-100 shadow-sm bg-white"
+      >
+        {/* === SVG OVERLAY FOR GRAPH LINES === */}
+        {/* Placed *outside* the table but *inside* the relative container */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-20"
+          style={{ overflow: "visible" }}
+        >
+          <path
+            d={svgPath}
+            fill="none"
+            stroke="#56B8D4"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+
+        <table className="w-full table-fixed text-[10px] text-center border-collapse relative z-10">
           <thead>
             <tr className="text-white text-[10px]">
               <th
@@ -534,32 +658,25 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               >
                 Alloc
               </th>
-
-              {/* Average */}
               <th
                 colSpan={2}
                 className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[10%]"
               >
                 average
               </th>
-              {/* Last Time */}
               <th
                 colSpan={2}
                 className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[10%]"
               >
                 last time
               </th>
-              {/* This Time */}
               <th className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[5%]">
                 this time
               </th>
-
-              {/* Graph */}
               <th colSpan={4} className="bg-[#6AC2DB] p-1 w-[20%]">
                 Evaluation graph
               </th>
             </tr>
-
             <tr className="text-white text-[9px]">
               <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
                 comparison
@@ -586,21 +703,19 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
           </thead>
 
           <tbody className="text-gray-600">
-            {ONE_COLOR_TABLE_STRUCTURE.map((row, idx) => {
+            {ONE_COLOR_TABLE_STRUCTURE.map((row, index) => {
               const currentVal = currentCheck
-                ? (currentCheck[row.dbKey as keyof SkillCheck] as number)
+                ? (currentCheck[row.key] as number) || 0
                 : 0;
+
               const prevVal = previousCheck
-                ? (previousCheck[row.dbKey as keyof SkillCheck] as number)
+                ? (previousCheck[row.key] as number) || 0
                 : 0;
+
               const natVal = Math.floor(row.allocation * 0.75);
-
               const rowScore = Math.min(currentVal, row.allocation);
-              const rowPrev = Math.min(prevVal, row.allocation);
-              const percentage =
-                row.allocation > 0 ? (rowScore / row.allocation) * 100 : 0;
+              const percentage = allPercentages[index];
 
-              // Dynamic Color logic for Category column
               let catColor = "bg-[#D6EAF0] text-teal-800";
               if (row.category === "color")
                 catColor = "bg-[#D0F0F0] text-teal-700";
@@ -609,7 +724,7 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
 
               return (
                 <tr
-                  key={idx}
+                  key={row.key}
                   className="border-b border-gray-100 hover:bg-gray-50 h-9"
                 >
                   {row.catSpan && (
@@ -620,7 +735,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                       <div className="whitespace-pre-line">{row.category}</div>
                     </td>
                   )}
-
                   {row.itemSpan && (
                     <td
                       rowSpan={row.itemSpan}
@@ -629,68 +743,69 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                       {row.item}
                     </td>
                   )}
-
                   <td className="border-r border-gray-100 bg-white align-middle">
                     {row.required && (
                       <Star className="w-3 h-3 text-orange-400 fill-orange-400 mx-auto" />
                     )}
                   </td>
-
                   <td className="border-r border-gray-100 text-center text-[9px] text-gray-400 align-middle">
                     {row.id}
                   </td>
-
                   <td
                     className={`text-left px-2 text-[9px] border-r border-gray-100 font-medium truncate align-middle ${
-                      row.label.includes("Too much scraping")
-                        ? "bg-yellow-50"
-                        : ""
+                      row.label.includes("Too much") ? "bg-yellow-50" : ""
                     }`}
                   >
                     {row.label}
                   </td>
-
                   <td className="font-bold border-r border-gray-100 align-middle text-sm text-black">
                     {row.allocation}
                   </td>
-
                   <td className="border-r border-gray-100 bg-[#F0FAFC] align-middle">
                     {renderTrend(rowScore, natVal)}
                   </td>
                   <td className="text-teal-600 font-bold border-r border-gray-100 bg-[#F0FAFC] align-middle">
                     {natVal}
                   </td>
-
                   <td className="border-r border-gray-100 bg-[#F2F6FA] align-middle">
-                    {renderTrend(rowScore, rowPrev)}
+                    {renderTrend(rowScore, prevVal)}
                   </td>
                   <td className="text-blue-600 font-bold border-r border-gray-100 bg-[#F2F6FA] align-middle">
-                    {rowPrev || 0}
+                    {prevVal}
                   </td>
-
                   <td className="text-red-500 font-bold border-r border-gray-100 bg-[#FFF5F7] align-middle">
                     {rowScore}
                   </td>
 
+                  {/* --- GRAPH CELL --- */}
                   <td
                     colSpan={4}
                     className="relative p-0 h-full align-middle bg-white"
                   >
-                    <div className="absolute inset-0 flex w-full h-full">
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full bg-yellow-50/20"></div>
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
+                    <div className="absolute inset-0 flex w-full h-full pointer-events-none">
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
                       <div className="w-1/4 h-full"></div>
                     </div>
+
+                    <div
+                      className="absolute top-1/2 left-0 h-2.5 bg-[#FFDACD] transform -translate-y-1/2 rounded-r-full z-0 opacity-90"
+                      style={{ width: `${percentage}%` }}
+                    ></div>
+
                     {row.required && (
                       <div
-                        className="absolute top-1/2 left-1 h-1.5 bg-red-400 rounded-full opacity-80"
-                        style={{ width: "25%", marginTop: "-3px" }}
+                        className="absolute top-1/2 left-0 h-2.5 bg-[#FF4520] transform -translate-y-1/2 rounded-r-full z-10 shadow-sm"
+                        style={{ width: "20%" }}
                       ></div>
                     )}
+
+                    {/* THE DOT MARKER - Used by useLayoutEffect to calculate lines */}
                     <div
-                      className="absolute top-1/2 w-2.5 h-2.5 bg-teal-500 rounded-full shadow-sm z-10 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700"
+                      className="graph-dot-marker absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700 border border-white"
                       style={{ left: `${percentage}%` }}
+                      data-index={index}
                     ></div>
                   </td>
                 </tr>
@@ -703,9 +818,8 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
       {/* Radar Chart */}
       <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm relative h-[600px]">
         <h3 className="text-left text-gray-600 font-bold absolute top-6 left-6">
-          graph name
+          One Color Balance
         </h3>
-
         <div className="absolute top-6 right-6 flex flex-col gap-2 text-[10px] font-bold z-10">
           <div className="flex items-center gap-2">
             <div className="w-8 h-0.5 bg-teal-400"></div> National average
@@ -720,7 +834,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
 
         <div className="w-full h-full flex items-center justify-center relative">
           <CustomGridLabels />
-
           <ResponsiveContainer width="100%" height="85%">
             <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
               <PolarGrid
@@ -745,14 +858,14 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               />
               <Radar
                 name="last time"
-                dataKey="A"
+                dataKey="prev"
                 stroke="#1e40af"
                 strokeWidth={2}
                 fill="transparent"
               />
               <Radar
                 name="this time"
-                dataKey="A"
+                dataKey="current"
                 stroke="#FF5E5E"
                 strokeWidth={2}
                 fill="transparent"

@@ -1,502 +1,545 @@
-import { useMemo } from "react";
-import {
-  Radar,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  ResponsiveContainer,
-} from "recharts";
+import { useMemo, useState, useRef, useLayoutEffect } from "react";
 import { ArrowUp, ArrowDown, Minus, MoveRight } from "lucide-react";
-
 import type { Database } from "./../../lib/database.types";
 
-// 1. TYPES
-type SkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"] & {
-  time_total?: number | null;
-  time_off?: number | null;
-  time_fillin?: number | null;
-  time_preparation?: number | null;
-  time_base?: number | null;
-  time_color_apply?: number | null;
-  time_top?: number | null;
-  total_time?: string | null;
-};
+// --- TYPES ---
+type SkillCheckRow = Database["public"]["Tables"]["skill_checks"]["Row"];
+type CustomerRow = Database["public"]["Tables"]["customers"]["Row"];
 
-interface TabProps {
-  currentCheck: SkillCheck | null;
-  previousCheck: SkillCheck | null;
+// EXTENDED TYPE: Matches .select('*, customers(*)')
+interface SkillCheckWithCustomer extends SkillCheckRow {
+  customers?: CustomerRow | CustomerRow[] | null; // Handle object or array
 }
 
-// --- TABLE STRUCTURE FOR DYNAMIC DATA ---
-const TIME_TABLE_STRUCTURE = [
+interface TabProps {
+  currentCheck: SkillCheckWithCustomer | null;
+  previousCheck?: SkillCheckWithCustomer | null;
+}
+
+interface TimeTableItem {
+  id: string;
+  label: string;
+  category: string;
+  catSpan: number;
+  allocation: number;
+  keyScore: keyof SkillCheckRow;
+  keyValue?: keyof SkillCheckRow;
+  keyTime?: keyof SkillCheckRow | keyof CustomerRow;
+  source: "skill" | "customer" | "calculated"; // Added 'calculated' for 29-7
+}
+
+// --- DATA CONFIGURATION ---
+const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
   {
     id: "29",
-    label: "total time",
+    label: "29. Total Time",
     category: "Total",
-    catSpan: 0,
+    catSpan: 1,
     allocation: 10,
-    dbKey: "time_total",
+    keyScore: "time_score",
+    keyValue: "total_time",
+    keyTime: "total_time",
+    source: "skill",
   },
   {
     id: "29-1",
-    label: "off",
-    category: "breakdown",
+    label: "29-1. Time Off",
+    category: "Breakdown",
     catSpan: 3,
     allocation: 20,
-    dbKey: "time_off",
+    keyScore: "care_off_finish_score",
+    keyTime: "time_off_fill",
+    source: "customer",
   },
   {
     id: "29-2",
-    label: "fill-in",
-    category: "breakdown",
+    label: "29-2. Time Fill",
+    category: "Breakdown",
     catSpan: 0,
     allocation: 10,
-    dbKey: "time_fillin",
+    keyScore: "care_file_finish_score",
+    keyTime: "time_off_fill",
+    source: "customer",
   },
   {
     id: "29-3",
-    label: "Preparation",
-    category: "breakdown",
+    label: "29-3. Time Care",
+    category: "Breakdown",
     catSpan: 0,
-    allocation: 20,
-    dbKey: "time_preparation",
+    allocation: 10,
+    keyScore: "care_score",
+    keyTime: "time_preparation",
+    source: "customer",
   },
   {
     id: "29-4",
-    label: "base",
-    category: "one color",
-    catSpan: 3,
-    allocation: 10,
-    dbKey: "time_base",
+    label: "29-4. Base",
+    category: "One Color",
+    catSpan: 4,
+    allocation: 20,
+    keyScore: "color_base_score",
+    keyTime: "time_one_color",
+    source: "customer",
   },
   {
     id: "29-5",
-    label: "color",
-    category: "one color",
+    label: "29-5. Color",
+    category: "One Color",
     catSpan: 0,
-    allocation: 20,
-    dbKey: "time_color_apply",
+    allocation: 10,
+    keyScore: "color_score",
+    keyTime: "time_one_color",
+    source: "customer",
   },
   {
     id: "29-6",
-    label: "Top",
-    category: "one color",
+    label: "29-6. Top",
+    category: "One Color",
     catSpan: 0,
     allocation: 20,
-    dbKey: "time_top",
+    keyScore: "color_apex_score",
+    keyTime: "time_top_finish",
+    source: "customer",
+  },
+  {
+    id: "29-7",
+    label: "29-7. Total",
+    category: "One Color",
+    catSpan: 0,
+    allocation: 20,
+    keyScore: "total_score",
+    source: "calculated", // Special handling
   },
 ];
 
 // --- HELPERS ---
-const formatTime = (minutes: number | null | undefined) => {
-  if (minutes === null || minutes === undefined || minutes === 0)
-    return "0 minutes 00 seconds";
-  return `${minutes} minutes 00 seconds`;
+
+// Helper to safely extract the customer object whether it's an array or object
+const getCustomerData = (data: SkillCheckWithCustomer) => {
+  if (!data.customers) return null;
+  if (Array.isArray(data.customers)) {
+    return data.customers.length > 0 ? data.customers[0] : null;
+  }
+  return data.customers;
 };
 
-const renderTimeTrend = (current: number, prev: number) => {
-  if (!current || !prev)
+const getRowData = (
+  data: SkillCheckWithCustomer | null | undefined,
+  row: TimeTableItem
+) => {
+  if (!data) return { score: 0, timeValue: null };
+
+  const score = (data[row.keyScore] as number) || 0;
+  let timeValue: string | number | null = null;
+
+  // 1. Handle Calculated Row (29-7)
+  if (row.source === "calculated" && row.id === "29-7") {
+    const cust = getCustomerData(data);
+    if (cust) {
+      // Sum of one_color and top_finish
+      const t1 = (cust.time_one_color as number) || 0;
+      const t2 = (cust.time_top_finish as number) || 0;
+      timeValue = t1 + t2;
+    }
+  }
+  // 2. Handle Customer Data
+  else if (row.source === "customer" && row.keyTime) {
+    const cust = getCustomerData(data);
+    if (cust) {
+      timeValue = cust[row.keyTime as keyof CustomerRow] as number | null;
+    }
+  }
+  // 3. Handle Skill Check Data
+  else if (row.source === "skill" && row.keyTime) {
+    timeValue = data[row.keyTime as keyof SkillCheckRow] as string | null;
+  }
+
+  return { score, timeValue };
+};
+
+const formatTimeDisplay = (val: string | number | null): string => {
+  if (val === null || val === undefined) return "-";
+  if (typeof val === "number") {
+    // Check if 0 to avoid returning "-" for valid 0 minutes
+    return `${val} minutes`;
+  }
+  return String(val);
+};
+
+const renderTrend = (current: number, target: number) => {
+  if (current == null || target == null)
     return <Minus className="w-3 h-3 text-gray-300 mx-auto" />;
-  if (current < prev)
-    return <ArrowUp className="w-3 h-3 text-blue-500 mx-auto" />; // Faster is better
-  if (current > prev)
-    return <ArrowDown className="w-3 h-3 text-red-500 mx-auto" />; // Slower
+  if (current > target)
+    return <ArrowUp className="w-3 h-3 text-blue-500 mx-auto" />;
+  if (current < target)
+    return <ArrowDown className="w-3 h-3 text-red-500 mx-auto" />;
   return <MoveRight className="w-3 h-3 text-green-500 mx-auto" />;
 };
 
-// --- CUSTOM TICK COMPONENT ---
-interface CustomTickProps {
-  x?: number | string;
-  y?: number | string;
-  payload?: { value: string };
-}
+// --- GRAPH HELPERS ---
+const polarToCartesian = (
+  centerX: number,
+  centerY: number,
+  radius: number,
+  angleInDegrees: number
+) => {
+  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+  return {
+    x: centerX + radius * Math.cos(angleInRadians),
+    y: centerY + radius * Math.sin(angleInRadians),
+  };
+};
 
-const CustomAxisTick = ({ x, y, payload }: CustomTickProps) => {
-  if (!payload) return <g />;
-  const { value } = payload;
-  const absX = Number(x) || 0;
-  const absY = Number(y) || 0;
-
-  let textAnchor: "middle" | "start" | "end" = "middle";
-  let dy = 0;
-  let dx = 0;
-
-  // Exact positioning matching 6-axis layout from screenshot
-  if (value === "total time") {
-    dy = -15;
-  } // Top
-  else if (value === "One color (base)") {
-    dy = 15;
-  } // Bottom
-  else if (value === "off/fill") {
-    textAnchor = "start";
-    dx = 10;
-    dy = -10;
-  } // Top Right
-  else if (value === "care") {
-    textAnchor = "start";
-    dx = 10;
-    dy = 10;
-  } // Bottom Right
-  else if (value === "One color (color)") {
-    textAnchor = "end";
-    dx = -10;
-    dy = 10;
-  } // Bottom Left
-  else if (value === "One color (top)") {
-    textAnchor = "end";
-    dx = -10;
-    dy = -10;
-  } // Top Left
-
+const makePath = (
+  dataPoints: number[],
+  maxValues: number[],
+  radius: number,
+  cx: number,
+  cy: number
+) => {
+  const totalAxes = 6;
   return (
-    <g transform={`translate(${absX},${absY})`}>
-      <text
-        x={dx}
-        y={dy}
-        textAnchor={textAnchor}
-        fill="#115e59"
-        fontSize={11}
-        fontWeight="bold"
-      >
-        {value}
-      </text>
-    </g>
+    dataPoints
+      .map((val, i) => {
+        const max = maxValues[i] || 1;
+        const normalized = Math.min(val / max, 1);
+        const r = radius * normalized;
+        const angle = (360 / totalAxes) * i;
+        const { x, y } = polarToCartesian(cx, cy, r, angle);
+        return `${i === 0 ? "M" : "L"} ${x},${y}`;
+      })
+      .join(" ") + " Z"
   );
 };
 
+// --- MAIN COMPONENT ---
 export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
-  // --- GRAPH DATA ---
-  const chartData = useMemo(() => {
-    if (!currentCheck) return [];
-    const val = (key: keyof SkillCheck) => (currentCheck[key] as number) || 0;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svgPath, setSvgPath] = useState("");
 
-    // Max Values for Scaling (Approximated from screenshot geometry)
-    const maxTotal = 90;
-    const maxOffFill = 18;
-    const maxCare = 24;
-    const maxBase = 14;
-    const maxColor = 22;
-    const maxTop = 10;
+  // 1. Calculate percentages
+  const allPercentages = useMemo(() => {
+    return TIME_TABLE_STRUCTURE.map((row) => {
+      const { score } = getRowData(currentCheck, row);
+      return (Math.min(score, row.allocation) / row.allocation) * 100;
+    });
+  }, [currentCheck]);
 
-    // Helper: Percentage of scale
-    const getPct = (val: number, max: number) =>
-      val > 0 ? Math.min(100, (val / max) * 100) : 0;
+  // 2. Dynamic Line Calculation
+  useLayoutEffect(() => {
+    const updatePath = () => {
+      if (!containerRef.current) return;
+      const dots = containerRef.current.querySelectorAll(".graph-dot-marker");
+      if (dots.length === 0) return;
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const points: { x: number; y: number }[] = [];
+
+      dots.forEach((dot) => {
+        const rect = dot.getBoundingClientRect();
+        const x = rect.left - containerRect.left + rect.width / 2;
+        const y = rect.top - containerRect.top + rect.height / 2;
+        points.push({ x, y });
+      });
+
+      const path = points.reduce(
+        (acc, p, index) =>
+          index === 0 ? `M ${p.x},${p.y}` : `${acc} L ${p.x},${p.y}`,
+        ""
+      );
+      setSvgPath(path);
+    };
+
+    const timeoutId = setTimeout(updatePath, 50);
+    window.addEventListener("resize", updatePath);
+    return () => {
+      window.removeEventListener("resize", updatePath);
+      clearTimeout(timeoutId);
+    };
+  }, [allPercentages]);
+
+  // 3. Radar Data
+  const radarData = useMemo(() => {
+    const safeGet = (key: keyof SkillCheckRow) =>
+      (currentCheck?.[key] as number) || 0;
 
     return [
+      { label: "Total Time", value: safeGet("time_score"), max: 10 },
+      { label: "Off/Fill", value: safeGet("care_off_finish_score"), max: 20 },
+      { label: "Care", value: safeGet("care_score"), max: 10 },
       {
-        subject: "total time",
-        A: getPct(val("time_total"), maxTotal),
-        fullMark: 100,
+        label: "One Color (Base)",
+        value: safeGet("color_base_score"),
+        max: 20,
       },
-      {
-        subject: "off/fill",
-        A: getPct(val("time_off") + val("time_fillin"), maxOffFill),
-        fullMark: 100,
-      },
-      {
-        subject: "care",
-        A: getPct(val("time_preparation"), maxCare),
-        fullMark: 100,
-      },
-      {
-        subject: "One color (base)",
-        A: getPct(val("time_base"), maxBase),
-        fullMark: 100,
-      },
-      {
-        subject: "One color (color)",
-        A: getPct(val("time_color_apply"), maxColor),
-        fullMark: 100,
-      },
-      {
-        subject: "One color (top)",
-        A: getPct(val("time_top"), maxTop),
-        fullMark: 100,
-      },
+      { label: "One Color (Color)", value: safeGet("color_score"), max: 10 },
+      { label: "One Color (Top)", value: safeGet("color_apex_score"), max: 20 },
     ];
   }, [currentCheck]);
 
-  // --- CUSTOM NUMERIC OVERLAY FOR GRAPH ---
-  const CustomGridLabels = () => {
-    return (
-      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-        <div className="relative w-[70%] h-[70%]">
-          {/* TOP AXIS (Total Time) */}
-          <span className="absolute top-[33%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            30
-          </span>
-          <span className="absolute top-[16%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            60
-          </span>
-          <span className="absolute top-[-2%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            90
-          </span>
-          <span className="absolute top-[0%] left-1/2 -translate-x-1/2 mt-3 text-[8px] text-gray-400">
-            minutes
-          </span>
-
-          {/* TOP RIGHT (Off/Fill) */}
-          <span className="absolute top-[28%] right-[25%] text-[9px] text-gray-500">
-            16 minutes
-          </span>
-          <span className="absolute top-[20%] right-[16%] text-[9px] text-gray-500">
-            17 minutes
-          </span>
-
-          {/* BOTTOM RIGHT (Care) */}
-          <span className="absolute bottom-[28%] right-[25%] text-[9px] text-gray-500">
-            23 minutes
-          </span>
-          <span className="absolute bottom-[20%] right-[16%] text-[9px] text-gray-500">
-            29 minutes
-          </span>
-
-          {/* BOTTOM (Base) */}
-          <span className="absolute bottom-[-2%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
-            13 minutes
-          </span>
-
-          {/* BOTTOM LEFT (Color) */}
-          <span className="absolute bottom-[28%] left-[25%] text-[9px] text-gray-500">
-            19 minutes
-          </span>
-          <span className="absolute bottom-[20%] left-[16%] text-[9px] text-gray-500">
-            20 minutes
-            <br />
-            30 seconds
-          </span>
-
-          {/* TOP LEFT (Top) */}
-          <span className="absolute top-[28%] left-[25%] text-[9px] text-gray-500">
-            9 minutes
-          </span>
-          <span className="absolute top-[20%] left-[16%] text-[9px] text-gray-500">
-            9 minutes
-            <br />
-            30 seconds
-          </span>
-
-          {/* CENTER */}
-          <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] text-gray-500">
-            0
-          </span>
-        </div>
-      </div>
-    );
+  // --- SUMMARY CONSTANTS ---
+  const NATIONAL_AVG = {
+    rank: "B",
+    score: 267,
+    time: "104 minutes 54 seconds",
   };
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-500 pb-12">
-      {/* 1. Top Summary Table */}
-      <div className="overflow-hidden rounded-sm border border-teal-500/20 shadow-sm">
-        <table className="w-full text-center border-collapse">
+    <div className="space-y-10 animate-in fade-in duration-500 pb-10">
+      {/* --- SUMMARY TABLE --- */}
+      <div className="border border-gray-200 rounded-sm overflow-hidden">
+        <table className="w-full text-center text-sm border-collapse">
           <thead>
-            <tr className="text-white text-xs">
-              <th
-                rowSpan={2}
-                className="bg-[#E5E5E5] text-gray-700 font-bold w-32 border-r border-white"
-              >
+            <tr className="text-white">
+              <th className="bg-[#E5E7EB] text-gray-600 font-bold w-[15%] border-r border-white">
                 Category
               </th>
               <th
                 colSpan={2}
-                className="bg-[#6AC2DB] py-2 border-r border-white font-medium"
+                className="bg-[#56B8D4] py-2 font-medium border-r border-white w-[28%]"
               >
                 National average
               </th>
               <th
                 colSpan={2}
-                className="bg-[#5B92CA] py-2 border-r border-white font-medium"
+                className="bg-[#4682B4] py-2 font-medium border-r border-white w-[28%]"
               >
                 last time
               </th>
-              <th colSpan={2} className="bg-[#FF9EAF] py-2 font-medium">
+              <th colSpan={2} className="bg-[#FF9B9B] py-2 font-medium w-[29%]">
                 this time
               </th>
             </tr>
-            <tr className="text-white text-[11px]">
-              <th className="bg-[#8ED4E8] py-1">Evaluation rank</th>
-              <th className="bg-[#8ED4E8] py-1">Score</th>
-              <th className="bg-[#7BAAD6] py-1">Evaluation rank</th>
-              <th className="bg-[#7BAAD6] py-1">Score</th>
-              <th className="bg-[#FFB7C3] py-1">Evaluation rank</th>
-              <th className="bg-[#FFB7C3] py-1">Score</th>
+            <tr className="text-white text-xs">
+              <th className="bg-[#56B8D4] border-r border-white"></th>
+              <th className="bg-[#8ED0E0] py-1 font-normal border-r border-white">
+                Evaluation rank
+              </th>
+              <th className="bg-[#8ED0E0] py-1 font-normal border-r border-white">
+                Score
+              </th>
+              <th className="bg-[#7DAED4] py-1 font-normal border-r border-white">
+                Evaluation rank
+              </th>
+              <th className="bg-[#7DAED4] py-1 font-normal border-r border-white">
+                Score
+              </th>
+              <th className="bg-[#FFBDBD] py-1 font-normal border-r border-white">
+                Evaluation rank
+              </th>
+              <th className="bg-[#FFBDBD] py-1 font-normal">Score</th>
             </tr>
           </thead>
-          <tbody className="text-sm font-bold">
-            <tr className="bg-white">
-              <td className="bg-[#6AC2DB] text-white py-4">time</td>
-              <td className="text-teal-600">B</td>
-              <td className="text-teal-600">
-                267
+          <tbody>
+            <tr className="bg-white h-12">
+              <td
+                rowSpan={2}
+                className="bg-[#56B8D4] text-white font-bold align-middle border-r border-white border-t-0"
+              >
+                time
+              </td>
+              <td className="text-[#56B8D4] font-bold border-r border-gray-200">
+                {NATIONAL_AVG.rank}
+              </td>
+              <td className="text-[#56B8D4] font-bold border-r border-gray-200">
+                {NATIONAL_AVG.score}
                 <span className="text-gray-400 text-xs font-normal">/300</span>
               </td>
-              <td className="bg-[#D9D9D9] text-gray-400 border-r border-white"></td>
-              <td className="bg-[#D9D9D9] text-gray-400 border-r border-white"></td>
-              <td className="text-red-500">A.A.</td>
-              <td className="text-red-500">
-                340
+              <td className="text-gray-400 bg-gray-100 border-r border-gray-200 font-bold">
+                {previousCheck?.rank || ""}
+              </td>
+              <td className="text-gray-400 bg-gray-100 border-r border-gray-200 font-bold">
+                {previousCheck?.total_score}
+              </td>
+              <td className="text-[#FF4520] font-bold border-r border-gray-200">
+                {currentCheck?.rank || "-"}
+              </td>
+              <td className="text-[#FF4520] font-bold">
+                {currentCheck?.total_score || "-"}
                 <span className="text-gray-400 text-xs font-normal">/300</span>
               </td>
             </tr>
-            <tr className="bg-white border-t border-gray-100">
-              <td className="bg-white"></td>
-              <td colSpan={2} className="text-teal-600 text-xs py-2">
-                104 minutes 54 seconds
+            <tr className="bg-white h-10">
+              <td
+                colSpan={2}
+                className="text-[#56B8D4] font-bold text-sm border-t border-gray-100 border-r border-gray-200"
+              >
+                {NATIONAL_AVG.time}
               </td>
               <td
                 colSpan={2}
-                className="text-gray-400 text-xs py-2 bg-[#D9D9D9]"
-              ></td>
-              <td colSpan={2} className="text-red-500 text-xs py-2">
-                {formatTime(currentCheck?.time_total)}
+                className="text-gray-400 bg-gray-100 font-bold text-sm border-t border-gray-100 border-r border-gray-200"
+              >
+                {previousCheck?.total_time || ""}
+              </td>
+              <td
+                colSpan={2}
+                className="text-[#FF4520] font-bold text-sm border-t border-gray-100"
+              >
+                {currentCheck?.total_time || "-"}
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* 2. Detailed Table */}
-      <div className="rounded-sm border border-teal-100 shadow-sm bg-white">
-        <table className="w-full table-fixed text-[10px] text-center border-collapse">
+      {/* --- BREAKDOWN TABLE --- */}
+      <div
+        ref={containerRef}
+        className="relative rounded-sm border border-teal-100 shadow-sm bg-white"
+      >
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-20"
+          style={{ overflow: "visible" }}
+        >
+          <path
+            d={svgPath}
+            fill="none"
+            stroke="#56B8D4"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+
+        <table className="w-full table-fixed text-[10px] text-center border-collapse relative z-10">
           <thead>
-            <tr className="text-white text-[10px]">
-              <th
-                rowSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[10%]"
-              >
-                category
-              </th>
-              <th
-                rowSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[6%]"
-              >
-                Point alloc
-              </th>
+            <tr className="text-white text-xs h-10">
               <th
                 colSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[22%]"
+                className="bg-[#56B8D4] p-1 border-r border-white/30 w-[20%]"
               >
-                average
+                Category
               </th>
-              <th
-                colSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[22%]"
-              >
-                last time
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[6%]">
+                Points
               </th>
-              <th className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[20%]">
-                this time
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[5%]">
+                Trend
               </th>
-              <th colSpan={4} className="bg-[#6AC2DB] p-1 w-[20%]">
-                Evaluation graph
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[12%]">
+                Average
+              </th>
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[5%]">
+                Trend
+              </th>
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[12%]">
+                Last Time
+              </th>
+              <th className="bg-[#56B8D4] p-1 border-r border-white/30 w-[15%]">
+                This Time
+              </th>
+              <th colSpan={4} className="bg-[#56B8D4] p-1 w-[25%]">
+                Evaluation Graph
               </th>
             </tr>
-            <tr className="text-white text-[9px]">
-              <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                comparison
-              </th>
-              <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                Score
-              </th>
-              <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                comparison
-              </th>
-              <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                Score
-              </th>
-              <th className="bg-[#ACD1E9] text-blue-700 border-r border-white/30 font-normal">
-                Score
-              </th>
-              <th className="bg-[#FCEE9C] text-yellow-700 border-r border-white">
+            <tr className="text-white text-[9px] h-6">
+              <th
+                colSpan={8}
+                className="bg-gray-100 border-r border-white"
+              ></th>
+              <th className="bg-[#FCEE9C] text-yellow-700 border-r border-white w-[6.25%]">
                 B
               </th>
-              <th className="bg-[#6AC2DB] border-r border-white">A</th>
-              <th className="bg-[#6AC2DB] border-r border-white">A.A.</th>
-              <th className="bg-[#6AC2DB]">AAA</th>
+              <th className="bg-[#56B8D4] border-r border-white w-[6.25%]">
+                A
+              </th>
+              <th className="bg-[#56B8D4] border-r border-white w-[6.25%]">
+                AA
+              </th>
+              <th className="bg-[#56B8D4] w-[6.25%]">AAA</th>
             </tr>
           </thead>
+
           <tbody className="text-gray-600">
-            {TIME_TABLE_STRUCTURE.map((row, idx) => {
-              const currentVal = currentCheck
-                ? (currentCheck[row.dbKey as keyof SkillCheck] as number)
-                : 0;
-              const prevVal = previousCheck
-                ? (previousCheck[row.dbKey as keyof SkillCheck] as number)
-                : 0;
-              const avgVal = 15;
-              const targetTime = 15;
+            {TIME_TABLE_STRUCTURE.map((row, index) => {
+              // 1. Get Current Data
+              const { score: currentScore, timeValue: currentTimeVal } =
+                getRowData(currentCheck, row);
+              const currentDisplay = formatTimeDisplay(currentTimeVal);
+
+              // 2. Get Previous Data
+              const { score: prevScore, timeValue: prevTimeVal } = getRowData(
+                previousCheck,
+                row
+              );
+              const prevDisplay = formatTimeDisplay(prevTimeVal);
+
+              const avgScore = Math.floor(row.allocation * 0.8);
               const percentage =
-                currentVal > 0
-                  ? Math.min(100, (targetTime / currentVal) * 100)
-                  : 0;
+                (Math.min(currentScore, row.allocation) / row.allocation) * 100;
+              const isTotalRow = row.id === "29";
+              const rowClass = isTotalRow ? "bg-[#D6EAF0]" : "hover:bg-gray-50";
 
               return (
                 <tr
-                  key={idx}
-                  className={`border-b border-gray-100 hover:bg-gray-50 h-9 ${
-                    row.id === "29" ? "bg-[#D6EAF0]" : ""
-                  }`}
+                  key={row.id}
+                  className={`border-b border-gray-100 ${rowClass} h-11`}
                 >
-                  {row.id === "29" ? (
-                    <td className="text-teal-700 font-bold p-1 border-r border-white align-middle text-[10px]">
-                      {row.id}. {row.label}
-                    </td>
-                  ) : row.catSpan > 0 ? (
+                  {isTotalRow ? (
                     <td
-                      rowSpan={row.catSpan}
-                      className="bg-[#D6EAF0] text-teal-700 font-bold p-1 border-r border-white align-middle text-[10px] leading-tight"
+                      colSpan={2}
+                      className="text-teal-700 font-bold p-2 border-r border-white align-middle text-left pl-4 text-xs"
                     >
-                      {row.category}
+                      {row.label}
                     </td>
-                  ) : null}
-                  {row.id !== "29" && (
-                    <td className="text-left px-2 text-teal-800 font-medium border-r border-gray-100 bg-[#F9FAFB]">
-                      {row.id}. {row.label}
-                    </td>
+                  ) : (
+                    <>
+                      {row.catSpan > 0 && (
+                        <td
+                          rowSpan={row.catSpan}
+                          className="bg-[#D6EAF0] text-teal-700 font-bold p-2 border-r border-white align-middle text-center text-xs w-[8%]"
+                        >
+                          {row.category}
+                        </td>
+                      )}
+                      <td className="bg-[#F9FAFB] text-gray-700 font-medium border-r border-gray-100 text-left px-2 w-[12%]">
+                        {row.label}
+                      </td>
+                    </>
                   )}
-                  {row.id === "29" && (
-                    <td className="text-left px-2 text-teal-800 font-bold border-r border-white bg-[#D6EAF0]"></td>
-                  )}
+
                   <td className="font-bold border-r border-gray-100 align-middle text-sm text-black">
                     {row.allocation}
                   </td>
-                  <td className="border-r border-gray-100 bg-[#F0FAFC] align-middle text-[9px]">
-                    {renderTimeTrend(currentVal, avgVal)}
+
+                  <td className="border-r border-gray-100 bg-[#F0FAFC] align-middle">
+                    {renderTrend(currentScore, avgScore)}
                   </td>
-                  <td className="text-teal-600 font-bold border-r border-gray-100 bg-[#F0FAFC] align-middle whitespace-nowrap overflow-hidden text-[9px]">
-                    {formatTime(avgVal)}
+                  <td className="text-teal-600 font-bold border-r border-gray-100 bg-[#F0FAFC] align-middle">
+                    30m 54s
                   </td>
-                  <td className="border-r border-gray-100 bg-[#F2F6FA] align-middle text-[9px]">
-                    {renderTimeTrend(currentVal, prevVal)}
+
+                  <td className="border-r border-gray-100 bg-[#D9D9D9] align-middle">
+                    {renderTrend(currentScore, prevScore)}
                   </td>
-                  <td className="text-blue-600 font-bold border-r border-gray-100 bg-[#F2F6FA] align-middle whitespace-nowrap overflow-hidden text-[9px]">
-                    {formatTime(prevVal)}
+                  <td className="text-gray-500 font-bold border-r border-gray-100 bg-[#D9D9D9] align-middle text-[10px]">
+                    {prevDisplay !== "-" ? prevDisplay : "-"}
                   </td>
-                  <td className="text-red-500 font-bold border-r border-gray-100 bg-[#FFF5F7] align-middle whitespace-nowrap overflow-hidden text-[9px]">
-                    {formatTime(currentVal)}
+
+                  <td className="text-[#FF4520] font-bold border-r border-gray-100 bg-white align-middle text-sm">
+                    {currentDisplay}
                   </td>
+
+                  {/* Graph */}
                   <td
                     colSpan={4}
                     className="relative p-0 h-full align-middle bg-white"
                   >
-                    <div className="absolute inset-0 flex w-full h-full">
+                    <div className="absolute inset-0 flex w-full h-full pointer-events-none">
                       <div className="w-1/4 border-r border-dashed border-gray-200 h-full bg-yellow-50/20"></div>
                       <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
                       <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
                       <div className="w-1/4 h-full"></div>
                     </div>
-                    {row.id === "29-5" && (
-                      <div
-                        className="absolute top-1/2 left-1 h-1.5 bg-red-400 rounded-full opacity-80"
-                        style={{ width: "20%", marginTop: "-3px" }}
-                      ></div>
-                    )}
                     <div
-                      className="absolute top-1/2 w-2.5 h-2.5 bg-teal-500 rounded-full shadow-sm z-10 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700"
+                      className="absolute top-1/2 left-0 h-2.5 bg-[#FFDACD] transform -translate-y-1/2 rounded-r-full z-0 opacity-90"
+                      style={{ width: `${percentage}%` }}
+                    ></div>
+                    <div
+                      className="graph-dot-marker absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 border border-white"
                       style={{ left: `${percentage}%` }}
+                      data-index={index}
                     ></div>
                   </td>
                 </tr>
@@ -506,311 +549,87 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
         </table>
       </div>
 
-      {/* 3. Radar Chart */}
-      <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm relative h-[700px]">
-        <h3 className="text-left text-gray-600 font-bold absolute top-6 left-6">
-          graph name
+      {/* --- RADAR CHART --- */}
+      <div className="bg-white rounded-sm p-6 flex flex-col items-center justify-center">
+        <h3 className="w-full text-left text-gray-700 font-semibold border-b pb-2 mb-6 text-sm">
+          Graph Name
         </h3>
-
-        <div className="absolute top-6 right-6 flex flex-col gap-2 text-[10px] font-bold z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 bg-teal-400"></div> National average
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 bg-blue-800"></div> last time
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-0.5 bg-red-500"></div> this time
-          </div>
-        </div>
-
-        <div className="w-full h-full flex items-center justify-center relative">
-          <CustomGridLabels />
-
-          <ResponsiveContainer width="100%" height="85%">
-            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={chartData}>
-              <PolarGrid
-                gridType="polygon"
-                stroke="#e5e7eb"
-                strokeWidth={1.5}
+        <div className="relative w-[400px] h-[400px]">
+          <svg viewBox="0 0 400 400" className="w-full h-full overflow-visible">
+            {[0.2, 0.4, 0.6, 0.8, 1].map((scale, i) => (
+              <path
+                key={i}
+                d={makePath(
+                  radarData.map(() => 100),
+                  radarData.map(() => 100),
+                  140 * scale,
+                  200,
+                  200
+                )}
+                fill="none"
+                stroke="#E5E7EB"
+                strokeDasharray={i === 4 ? "" : "4 4"}
+                strokeWidth="1"
               />
-              <PolarAngleAxis dataKey="subject" tick={CustomAxisTick} />
-              <PolarRadiusAxis
-                angle={90}
-                domain={[0, 100]}
-                tick={false}
-                axisLine={false}
-              />
-              <Radar
-                name="National average"
-                dataKey="fullMark"
-                stroke="#56B8D4"
-                strokeWidth={2}
-                fill="transparent"
-                isAnimationActive={false}
-              />
-              <Radar
-                name="last time"
-                dataKey="A"
-                stroke="#1e40af"
-                strokeWidth={2}
-                fill="transparent"
-              />
-              <Radar
-                name="this time"
-                dataKey="A"
-                stroke="#FF5E5E"
-                strokeWidth={2}
-                fill="transparent"
-              />
-            </RadarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+            ))}
+            {radarData.map((_, i) => {
+              const { x, y } = polarToCartesian(200, 200, 140, (360 / 6) * i);
+              return (
+                <line
+                  key={i}
+                  x1="200"
+                  y1="200"
+                  x2={x}
+                  y2={y}
+                  stroke="#E5E7EB"
+                  strokeWidth="1"
+                />
+              );
+            })}
+            {radarData.map((item, i) => {
+              const { x, y } = polarToCartesian(200, 200, 165, (360 / 6) * i);
+              let anchor: "start" | "middle" | "end" = "middle";
+              if (x < 180) anchor = "end";
+              if (x > 220) anchor = "start";
 
-      {/* 4. Evaluation Rank Criteria Table (Corrected) */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-bold text-gray-700">
-          Evaluation rank criteria table
-        </h3>
-        <div className="overflow-hidden border border-gray-200 rounded-sm">
-          <table className="w-full text-center text-xs">
-            <thead className="bg-[#D6D6D6] text-gray-700">
-              <tr>
-                <th
-                  rowSpan={2}
-                  className="border-r border-gray-300 p-2 bg-[#CCCCCC]"
+              return (
+                <text
+                  key={i}
+                  x={x}
+                  y={y}
+                  className="text-[10px] fill-teal-600 font-medium uppercase"
+                  textAnchor={anchor}
+                  dominantBaseline="middle"
                 >
-                  Evaluation
-                  <br />
-                  rank
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  comprehensive
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  care
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  one color
-                </th>
-                <th colSpan={2} className="p-1 bg-[#D9D9D9]">
-                  time
-                </th>
-              </tr>
-              <tr className="text-[10px]">
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  Score
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  Score
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  Score
-                </th>
-                <th className="border-r border-gray-300 p-1 bg-[#D9D9D9]">
-                  Score
-                </th>
-                <th className="p-1 bg-[#D9D9D9]">time</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white text-gray-600 font-medium text-[11px]">
-              <tr className="border-b border-gray-100">
-                <td className="p-2 font-bold border-r bg-[#F2F2F2]">AAA</td>
-                <td className="border-r">1123~1320</td>
-                <td className="border-r">349~410</td>
-                <td className="border-r">519~610</td>
-                <td className="border-r">300</td>
-                <td>
-                  ~ Until 60
-                  <br />
-                  minutes 00
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100">
-                <td className="p-2 font-bold border-r bg-[#F2F2F2]">A.A.</td>
-                <td className="border-r">958~1122</td>
-                <td className="border-r">298~348</td>
-                <td className="border-r">443~518</td>
-                <td className="border-r">225</td>
-                <td>
-                  From 60 minutes 01 second
-                  <br />
-                  to 85 minutes 00 seconds
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100">
-                <td className="p-2 font-bold border-r bg-[#F2F2F2]">A</td>
-                <td className="border-r">793~957</td>
-                <td className="border-r">246~297</td>
-                <td className="border-r">367~442</td>
-                <td className="border-r">150</td>
-                <td>
-                  From 85 minutes 01 seconds to
-                  <br />
-                  90 minutes 00 seconds
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100">
-                <td className="p-2 font-bold border-r bg-[#F2F2F2]">B</td>
-                <td className="border-r">~792</td>
-                <td className="border-r">~245</td>
-                <td className="border-r">~366</td>
-                <td className="border-r">75</td>
-                <td>90 minutes 01 seconds ~</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 5. Reference Timetable (Corrected) */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-bold text-gray-700">Reference timetable</h3>
-        <div className="overflow-hidden border border-gray-200 rounded-sm">
-          <table className="w-full text-center text-xs border-collapse">
-            <thead className="bg-[#D6D6D6] text-gray-700 font-bold">
-              <tr>
-                <th
-                  colSpan={2}
-                  className="p-2 border-r border-gray-300 w-24 bg-[#CCCCCC]"
-                >
-                  item
-                </th>
-                <th className="p-2 border-r border-gray-300 w-32 bg-[#D9D9D9]">
-                  AAA
-                </th>
-                <th className="p-2 border-r border-gray-300 w-32 bg-[#D9D9D9]">
-                  A.A.
-                </th>
-                <th className="p-2 border-r border-gray-300 w-32 bg-[#D9D9D9]">
-                  A
-                </th>
-                <th className="p-2 w-32 bg-[#D9D9D9]">B</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white text-gray-600 text-[11px]">
-              {/* Off/Fill */}
-              <tr className="border-b border-gray-100">
-                <td className="bg-[#F3F1EF] font-medium border-r p-2">
-                  off/fill in
-                </td>
-                <td
-                  rowSpan={2}
-                  className="bg-white border-r text-[10px] w-12 align-middle"
-                >
-                  time
-                </td>
-                <td className="border-r p-2">~ 17 minutes</td>
-                <td className="border-r p-2">
-                  18 minutes 30
-                  <br />
-                  seconds
-                </td>
-                <td className="border-r p-2">20 minutes</td>
-                <td className="p-2">20 minutes ~</td>
-              </tr>
-              {/* Preparation */}
-              <tr className="border-b border-gray-100">
-                <td className="bg-[#F3F1EF] font-medium border-r p-2">
-                  Preparation
-                </td>
-                <td className="border-r p-2">~ 22 minutes</td>
-                <td className="border-r p-2">23 minutes</td>
-                <td className="border-r p-2">24 minutes</td>
-                <td className="p-2">24 minutes ~</td>
-              </tr>
-              {/* One Color Block */}
-              <tr>
-                <td
-                  rowSpan={4}
-                  className="bg-[#F3F1EF] font-medium border-r border-b border-gray-100 p-2 align-middle"
-                >
-                  one color
-                </td>
-                <td className="bg-white border-r border-b border-gray-100 p-1 text-[10px]">
-                  base
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  ~ 13 minutes
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  13 minutes 30
-                  <br />
-                  seconds
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  14 minutes
-                </td>
-                <td className="border-b border-gray-100 p-2">14 minutes ~</td>
-              </tr>
-              <tr>
-                <td className="bg-white border-r border-b border-gray-100 p-1 text-[10px]">
-                  color
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  ~ 19 minutes
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  20 minutes 30
-                  <br />
-                  seconds
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  22 minutes
-                </td>
-                <td className="border-b border-gray-100 p-2">22 minutes ~</td>
-              </tr>
-              <tr>
-                <td className="bg-white border-r border-b border-gray-100 p-1 text-[10px]">
-                  top
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  ~ 9 minutes
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  9 minutes 30
-                  <br />
-                  seconds
-                </td>
-                <td className="border-r border-b border-gray-100 p-2">
-                  10 minutes
-                </td>
-                <td className="border-b border-gray-100 p-2">10 minutes ~</td>
-              </tr>
-              <tr className="border-b border-gray-100">
-                <td className="bg-white border-r p-1 text-[10px]">total</td>
-                <td className="border-r p-2">~ 41 minutes</td>
-                <td className="border-r p-2">
-                  43 minutes 30
-                  <br />
-                  seconds
-                </td>
-                <td className="border-r p-2">46 minutes</td>
-                <td className="p-2">46 minutes ~</td>
-              </tr>
-              {/* Total Time Footer (Pink) */}
-              <tr className="bg-[#FFD7D5]">
-                <td
-                  colSpan={2}
-                  className="font-bold text-gray-700 p-3 border-r border-white"
-                >
-                  Total total time
-                </td>
-                <td className="font-bold border-r border-white">
-                  ~ 79 minutes
-                </td>
-                <td className="font-bold border-r border-white bg-white p-3 border-b-2 border-red-400 shadow-sm">
-                  80 minutes
-                </td>
-                <td className="font-bold border-r border-white">90 minutes</td>
-                <td className="font-bold">90 minutes ~</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div className="text-[10px] text-gray-400 mt-2">
-          *Calculated by subtracting 5 minutes per hand for off-winding time
+                  {item.label}
+                </text>
+              );
+            })}
+            <path
+              d={makePath(
+                radarData.map((d) => d.value),
+                radarData.map((d) => d.max),
+                140,
+                200,
+                200
+              )}
+              fill="rgba(255, 69, 32, 0.1)"
+              stroke="#FF4520"
+              strokeWidth="2"
+            />
+            <path
+              d={makePath(
+                [8, 15, 7, 14, 8, 16],
+                radarData.map((d) => d.max),
+                140,
+                200,
+                200
+              )}
+              fill="none"
+              stroke="#56B8D4"
+              strokeWidth="1.5"
+            />
+          </svg>
         </div>
       </div>
     </div>

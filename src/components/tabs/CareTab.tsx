@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useRef, useLayoutEffect } from "react";
 import {
   Radar,
   RadarChart,
@@ -11,21 +11,32 @@ import { ArrowUp, ArrowDown, Minus, Star, MoveRight } from "lucide-react";
 
 import type { Database } from "./../../lib/database.types";
 
-// Allow dynamic access to scores via string keys
-type SkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"] & {
-  [key: string]: number | string | boolean | null | undefined;
-};
+// --- TYPES ---
+type BaseSkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"];
+
+interface SkillCheck extends BaseSkillCheck {
+  [key: string]: unknown;
+}
 
 interface TabProps {
   currentCheck: SkillCheck | null;
   previousCheck: SkillCheck | null;
 }
 
+interface CareTableItem {
+  category?: string;
+  catSpan?: number;
+  item?: string;
+  itemSpan?: number;
+  id: string;
+  label: string;
+  allocation: number;
+  required?: boolean;
+  key: keyof SkillCheck;
+}
+
 // --- DATA STRUCTURE ---
-// UPDATED: Each row now has a unique 'key' corresponding to a specific data point.
-// Ensure your CSV/DB columns match these keys (e.g., care_1_1, care_1_2).
-const CARE_TABLE_STRUCTURE = [
-  // --- CATEGORY: FILE / FILE (Shearling) ---
+const CARE_TABLE_STRUCTURE: CareTableItem[] = [
   {
     category: "file / file",
     catSpan: 7,
@@ -42,7 +53,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 20,
     key: "care_1_2",
   },
-  // --- CATEGORY: FILE / FILE (Off Finish) ---
   {
     item: "2. off finish",
     itemSpan: 1,
@@ -51,7 +61,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 20,
     key: "care_2_1",
   },
-  // --- CATEGORY: FILE / FILE (File Finish) ---
   {
     item: "3. Fill-in Finish",
     itemSpan: 4,
@@ -78,8 +87,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 10,
     key: "care_3_4",
   },
-
-  // --- CATEGORY: FILE (Shape) ---
   {
     category: "file / file",
     catSpan: 8,
@@ -99,7 +106,6 @@ const CARE_TABLE_STRUCTURE = [
     required: true,
     key: "care_4_3",
   },
-  // --- CATEGORY: FILE (Side) ---
   {
     item: "5. side straight",
     itemSpan: 3,
@@ -115,7 +121,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 20,
     key: "care_5_3",
   },
-  // --- CATEGORY: FILE (Symmetry) ---
   {
     item: "6. symmetrical",
     itemSpan: 2,
@@ -130,8 +135,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 20,
     key: "care_6_2",
   },
-
-  // --- CATEGORY: CUTICLE CARE ---
   {
     category: "cuticle care",
     catSpan: 11,
@@ -168,7 +171,6 @@ const CARE_TABLE_STRUCTURE = [
     required: true,
     key: "care_10_1",
   },
-  // --- CATEGORY: CUTICLE CARE (Loose Cuticle) ---
   {
     item: "11. side wall",
     itemSpan: 2,
@@ -198,7 +200,6 @@ const CARE_TABLE_STRUCTURE = [
     allocation: 20,
     key: "care_12_2",
   },
-  // --- CATEGORY: CUTICLE CARE (Nipper) ---
   {
     item: "13. Nipper processing",
     itemSpan: 3,
@@ -227,48 +228,50 @@ const renderTrend = (current: number, target: number) => {
   return <MoveRight className="w-3 h-3 text-green-500 mx-auto" />;
 };
 
-// Helper to sum scores based on ranges in the config
 const calculateSum = (
   data: SkillCheck | null,
   rangeStart: number,
   rangeEnd: number
 ) => {
   if (!data) return 0;
-
   let sum = 0;
   CARE_TABLE_STRUCTURE.forEach((row) => {
     const mainId = parseInt(row.id.split("-")[0], 10);
-
     if (mainId >= rangeStart && mainId <= rangeEnd) {
       const raw = data[row.key];
       const n = raw == null ? 0 : Number(raw);
       sum += Number.isFinite(n) ? n : 0;
     }
   });
-
   return sum;
 };
 
-// Helper for full total
 const calculateTotal = (data: SkillCheck | null) => {
   if (!data) return 0;
-
-  // 1. Use DB aggregate total if available
   if (typeof data.total_score === "number") return data.total_score;
   if (typeof data.care_score === "number") return data.care_score;
-
-  // 2. Fallback: manually calculate from structure
   let sum = 0;
   CARE_TABLE_STRUCTURE.forEach((row) => {
     const raw = data[row.key];
     const n = raw == null ? 0 : Number(raw);
     sum += Number.isFinite(n) ? n : 0;
   });
-
   return sum;
 };
 
-// --- CUSTOM CHART COMPONENTS ---
+// --- HELPER FOR PERCENTAGE CALC ---
+const getPercentage = (
+  check: SkillCheck | null,
+  key: keyof SkillCheck,
+  allocation: number
+) => {
+  if (!check || !allocation) return 0;
+  const val = check[key] != null ? Number(check[key]) : 0;
+  const score = Math.min(val, allocation);
+  return (score / allocation) * 100;
+};
+
+// --- CHART COMPONENTS ---
 interface CustomTickProps {
   x?: number | string;
   y?: number | string;
@@ -280,7 +283,6 @@ const CustomAxisTick = ({ x, y, payload }: CustomTickProps) => {
   const { value } = payload;
   const absX = Number(x) || 0;
   const absY = Number(y) || 0;
-
   let textAnchor: "middle" | "start" | "end" = "middle";
   let dy = 0;
   let dx = 0;
@@ -323,23 +325,18 @@ const CustomGridLabels = () => {
   return (
     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
       <div className="relative w-[80%] h-[80%]">
-        {/* Top Axis (Care) */}
         <span className="absolute top-[-1%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
           410
         </span>
-        {/* Right Axis (File 1-3) */}
         <span className="absolute top-1/2 right-[0%] text-[9px] text-gray-500 bg-white px-0.5">
           100
         </span>
-        {/* Bottom Axis (File 4-6) */}
         <span className="absolute bottom-[-1%] left-1/2 -translate-x-1/2 text-[9px] text-gray-500 bg-white px-0.5">
           150
         </span>
-        {/* Left Axis (Cuticle) */}
         <span className="absolute top-1/2 left-[0%] text-[9px] text-gray-500 bg-white px-0.5">
           210
         </span>
-        {/* Center */}
         <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] text-gray-500">
           0
         </span>
@@ -349,15 +346,59 @@ const CustomGridLabels = () => {
 };
 
 export default function CareTab({ currentCheck, previousCheck }: TabProps) {
-  // 1. Dynamically calculate totals for the Chart
+  // Use container ref for calculating coordinates
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [svgPath, setSvgPath] = useState("");
+
+  const allPercentages = useMemo(() => {
+    return CARE_TABLE_STRUCTURE.map((row) =>
+      getPercentage(currentCheck, row.key, row.allocation)
+    );
+  }, [currentCheck]);
+
+  // Recalculate line path whenever data or window size changes
+  // This replaces the old 'index * 36' logic which was brittle
+  useLayoutEffect(() => {
+    const updatePath = () => {
+      if (!containerRef.current) return;
+
+      const dots = containerRef.current.querySelectorAll(".graph-dot-marker");
+      if (dots.length === 0) return;
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const points: { x: number; y: number }[] = [];
+
+      dots.forEach((dot) => {
+        const rect = dot.getBoundingClientRect();
+        // Calculate center of dot relative to container
+        const x = rect.left - containerRect.left + rect.width / 2;
+        const y = rect.top - containerRect.top + rect.height / 2;
+        points.push({ x, y });
+      });
+
+      const path = points.reduce(
+        (acc, p, index) =>
+          index === 0 ? `M ${p.x},${p.y}` : `${acc} L ${p.x},${p.y}`,
+        ""
+      );
+      setSvgPath(path);
+    };
+
+    // Initial calculation
+    // Small timeout ensures the layout is fully settled
+    const timeoutId = setTimeout(updatePath, 50);
+
+    window.addEventListener("resize", updatePath);
+    return () => {
+      window.removeEventListener("resize", updatePath);
+      clearTimeout(timeoutId);
+    };
+  }, [allPercentages]);
+
   const careChartData = useMemo(() => {
-    // Group 1: 1-3 (File 1) Max 100
     const fileGroupRight = calculateSum(currentCheck, 1, 3);
-    // Group 2: 4-6 (File 2) Max 150
     const fileGroupBottom = calculateSum(currentCheck, 4, 6);
-    // Group 3: 7-13 (Cuticle) Max 210
     const cuticleGroup = calculateSum(currentCheck, 7, 13);
-    // Total Care Max 410 (Calculated sum of all items)
     const totalCare = fileGroupRight + fileGroupBottom + cuticleGroup;
 
     return [
@@ -371,11 +412,7 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
         A: (fileGroupRight / 100) * 100,
         fullMark: 100,
       },
-      {
-        subject: "file",
-        A: (fileGroupBottom / 150) * 100,
-        fullMark: 100,
-      },
+      { subject: "file", A: (fileGroupBottom / 150) * 100, fullMark: 100 },
       {
         subject: "re\nre\nre\n-",
         A: (cuticleGroup / 210) * 100,
@@ -384,14 +421,12 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
     ];
   }, [currentCheck]);
 
-  // 2. Calculate Summary Table Data
   const thisTotal = useMemo(() => calculateTotal(currentCheck), [currentCheck]);
   const prevTotal = useMemo(
     () => calculateTotal(previousCheck),
     [previousCheck]
   );
 
-  // Helper to get national average rank (Hardcoded logic based on total)
   const getRank = (score: number, max: number) => {
     const pct = (score / max) * 100;
     if (pct >= 90) return "AAA";
@@ -465,9 +500,27 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
         </table>
       </div>
 
-      {/* Detailed Table */}
-      <div className="rounded-sm border border-teal-100 shadow-sm bg-white">
-        <table className="w-full table-fixed text-[10px] text-center border-collapse">
+      {/* Detailed Table Container */}
+      <div
+        ref={containerRef}
+        className="relative rounded-sm border border-teal-100 shadow-sm bg-white"
+      >
+        {/* === SVG OVERLAY FOR GRAPH LINES === */}
+        <svg
+          className="absolute inset-0 w-full h-full pointer-events-none z-20"
+          style={{ overflow: "visible" }}
+        >
+          <path
+            d={svgPath}
+            fill="none"
+            stroke="#56B8D4"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+
+        <table className="w-full table-fixed text-[10px] text-center border-collapse relative z-10">
           <thead>
             <tr className="text-white text-[10px]">
               <th
@@ -550,19 +603,22 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
             </tr>
           </thead>
           <tbody className="text-gray-600">
-            {CARE_TABLE_STRUCTURE.map((row) => {
-              // Dynamic access using unique keys
-              const currentVal = currentCheck
-                ? (currentCheck[row.key] as number) || 0
-                : 0;
-              const prevVal = previousCheck
-                ? (previousCheck[row.key] as number) || 0
-                : 0;
+            {CARE_TABLE_STRUCTURE.map((row, index) => {
+              // 1. Current Row Data
+              const currentVal =
+                currentCheck && currentCheck[row.key] != null
+                  ? Number(currentCheck[row.key])
+                  : 0;
+              const prevVal =
+                previousCheck && previousCheck[row.key] != null
+                  ? Number(previousCheck[row.key])
+                  : 0;
 
               const natVal = Math.floor(row.allocation * 0.75);
               const rowScore = Math.min(currentVal, row.allocation);
-              const percentage =
-                row.allocation > 0 ? (rowScore / row.allocation) * 100 : 0;
+
+              // 2. Percentage from pre-calculated array
+              const percentage = allPercentages[index];
 
               return (
                 <tr
@@ -614,25 +670,39 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
                   <td className="text-red-500 font-bold border-r border-gray-100 bg-[#FFF5F7] align-middle">
                     {rowScore}
                   </td>
+
+                  {/* --- GRAPH CELL --- */}
                   <td
                     colSpan={4}
                     className="relative p-0 h-full align-middle bg-white"
                   >
-                    <div className="absolute inset-0 flex w-full h-full">
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full bg-yellow-50/20"></div>
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
-                      <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
+                    {/* 1. Grid Background (Vertical Dotted Lines) */}
+                    <div className="absolute inset-0 flex w-full h-full pointer-events-none">
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
+                      <div className="w-1/4 border-r border-dotted border-gray-300 h-full"></div>
                       <div className="w-1/4 h-full"></div>
                     </div>
+
+                    {/* 2. Light Pink Bar (Score Progress) */}
+                    <div
+                      className="absolute top-1/2 left-0 h-2.5 bg-[#FFDACD] transform -translate-y-1/2 rounded-r-full z-0 opacity-90"
+                      style={{ width: `${percentage}%` }}
+                    ></div>
+
+                    {/* 3. Dark Red Bar (Required Marker) */}
                     {row.required && (
                       <div
-                        className="absolute top-1/2 left-1 h-1.5 bg-red-400 rounded-full opacity-80"
-                        style={{ width: "25%", marginTop: "-3px" }}
+                        className="absolute top-1/2 left-0 h-2.5 bg-[#FF4520] transform -translate-y-1/2 rounded-r-full z-10 shadow-sm"
+                        style={{ width: "20%" }}
                       ></div>
                     )}
+
+                    {/* 4. Teal Dot Marker - Used for line calculation */}
                     <div
-                      className="absolute top-1/2 w-2.5 h-2.5 bg-teal-500 rounded-full shadow-sm z-10 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700"
+                      className="graph-dot-marker absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700 border border-white"
                       style={{ left: `${percentage}%` }}
+                      data-index={index}
                     ></div>
                   </td>
                 </tr>
@@ -642,12 +712,11 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
         </table>
       </div>
 
-      {/* Radar Chart */}
+      {/* Radar Chart Component */}
       <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm relative h-[600px]">
         <h3 className="text-left text-gray-600 font-bold absolute top-6 left-6">
-          Care Skill Balance
+          Care Balance
         </h3>
-
         <div className="absolute top-6 right-6 flex flex-col gap-2 text-[10px] font-bold z-10">
           <div className="flex items-center gap-2">
             <div className="w-8 h-0.5 bg-teal-400"></div> National average
@@ -662,7 +731,6 @@ export default function CareTab({ currentCheck, previousCheck }: TabProps) {
 
         <div className="w-full h-full flex items-center justify-center relative">
           <CustomGridLabels />
-
           <ResponsiveContainer width="100%" height="90%">
             <RadarChart
               cx="50%"
