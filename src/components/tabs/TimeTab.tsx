@@ -6,9 +6,8 @@ import type { Database } from "./../../lib/database.types";
 type SkillCheckRow = Database["public"]["Tables"]["skill_checks"]["Row"];
 type CustomerRow = Database["public"]["Tables"]["customers"]["Row"];
 
-// EXTENDED TYPE: Matches .select('*, customers(*)')
 interface SkillCheckWithCustomer extends SkillCheckRow {
-  customers?: CustomerRow | CustomerRow[] | null; // Handle object or array
+  customers?: CustomerRow | CustomerRow[] | null;
 }
 
 interface TabProps {
@@ -25,7 +24,8 @@ interface TimeTableItem {
   keyScore: keyof SkillCheckRow;
   keyValue?: keyof SkillCheckRow;
   keyTime?: keyof SkillCheckRow | keyof CustomerRow;
-  source: "skill" | "customer" | "calculated"; // Added 'calculated' for 29-7
+  source: "skill" | "customer" | "calculated";
+  targetMinutes?: number;
 }
 
 // --- DATA CONFIGURATION ---
@@ -37,9 +37,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 1,
     allocation: 10,
     keyScore: "time_score",
-    keyValue: "total_time",
     keyTime: "total_time",
     source: "skill",
+    targetMinutes: 60,
   },
   {
     id: "29-1",
@@ -48,8 +48,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 3,
     allocation: 20,
     keyScore: "care_off_finish_score",
-    keyTime: "time_off_fill",
-    source: "customer",
+    keyTime: "time_29_1_value",
+    source: "skill",
+    targetMinutes: 15,
   },
   {
     id: "29-2",
@@ -58,8 +59,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 0,
     allocation: 10,
     keyScore: "care_file_finish_score",
-    keyTime: "time_off_fill",
-    source: "customer",
+    keyTime: "time_29_2_value",
+    source: "skill",
+    targetMinutes: 10,
   },
   {
     id: "29-3",
@@ -68,8 +70,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 0,
     allocation: 10,
     keyScore: "care_score",
-    keyTime: "time_preparation",
-    source: "customer",
+    keyTime: "time_29_3_value",
+    source: "skill",
+    targetMinutes: 10,
   },
   {
     id: "29-4",
@@ -78,8 +81,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 4,
     allocation: 20,
     keyScore: "color_base_score",
-    keyTime: "time_one_color",
-    source: "customer",
+    keyTime: "time_29_4_value",
+    source: "skill",
+    targetMinutes: 15,
   },
   {
     id: "29-5",
@@ -88,8 +92,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 0,
     allocation: 10,
     keyScore: "color_score",
-    keyTime: "time_one_color",
-    source: "customer",
+    keyTime: "time_29_5_value",
+    source: "skill",
+    targetMinutes: 15,
   },
   {
     id: "29-6",
@@ -98,8 +103,9 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 0,
     allocation: 20,
     keyScore: "color_apex_score",
-    keyTime: "time_top_finish",
-    source: "customer",
+    keyTime: "time_29_6_value",
+    source: "skill",
+    targetMinutes: 10,
   },
   {
     id: "29-7",
@@ -108,13 +114,14 @@ const TIME_TABLE_STRUCTURE: TimeTableItem[] = [
     catSpan: 0,
     allocation: 20,
     keyScore: "total_score",
-    source: "calculated", // Special handling
+    keyTime: "time_29_7_value",
+    source: "skill",
+    targetMinutes: 40,
   },
 ];
 
 // --- HELPERS ---
 
-// Helper to safely extract the customer object whether it's an array or object
 const getCustomerData = (data: SkillCheckWithCustomer) => {
   if (!data.customers) return null;
   if (Array.isArray(data.customers)) {
@@ -123,35 +130,42 @@ const getCustomerData = (data: SkillCheckWithCustomer) => {
   return data.customers;
 };
 
+const parseMinutes = (val: string | number | null): number | null => {
+  if (val === null || val === undefined) return null;
+  if (typeof val === "number") return val;
+  const extracted = parseInt(val.replace(/[^0-9]/g, ""), 10);
+  return isNaN(extracted) ? null : extracted;
+};
+
 const getRowData = (
   data: SkillCheckWithCustomer | null | undefined,
   row: TimeTableItem
 ) => {
   if (!data) return { score: 0, timeValue: null };
 
-  const score = (data[row.keyScore] as number) || 0;
+  let score = (data[row.keyScore] as number) || 0;
   let timeValue: string | number | null = null;
 
-  // 1. Handle Calculated Row (29-7)
-  if (row.source === "calculated" && row.id === "29-7") {
-    const cust = getCustomerData(data);
-    if (cust) {
-      // Sum of one_color and top_finish
-      const t1 = (cust.time_one_color as number) || 0;
-      const t2 = (cust.time_top_finish as number) || 0;
-      timeValue = t1 + t2;
-    }
-  }
-  // 2. Handle Customer Data
-  else if (row.source === "customer" && row.keyTime) {
+  if (row.source === "customer" && row.keyTime) {
     const cust = getCustomerData(data);
     if (cust) {
       timeValue = cust[row.keyTime as keyof CustomerRow] as number | null;
     }
-  }
-  // 3. Handle Skill Check Data
-  else if (row.source === "skill" && row.keyTime) {
+  } else if (row.source === "skill" && row.keyTime) {
     timeValue = data[row.keyTime as keyof SkillCheckRow] as string | null;
+  }
+
+  // Override Score based on Time Used / Target
+  if (timeValue && typeof timeValue === "string" && row.targetMinutes) {
+    const minutes = parseMinutes(timeValue);
+    if (minutes !== null) {
+      if (minutes > row.targetMinutes) {
+        score = row.allocation; // Full bar if time exceeded
+      } else {
+        // Proportional score based on time used vs target
+        score = (minutes / row.targetMinutes) * row.allocation;
+      }
+    }
   }
 
   return { score, timeValue };
@@ -159,14 +173,11 @@ const getRowData = (
 
 const formatTimeDisplay = (val: string | number | null): string => {
   if (val === null || val === undefined) return "-";
-  if (typeof val === "number") {
-    // Check if 0 to avoid returning "-" for valid 0 minutes
-    return `${val} minutes`;
-  }
+  if (typeof val === "number") return `${val} minutes`;
   return String(val);
 };
 
-const renderTrend = (current: number, target: number) => {
+const renderTrend = (current: number | null, target: number | null) => {
   if (current == null || target == null)
     return <Minus className="w-3 h-3 text-gray-300 mx-auto" />;
   if (current > target)
@@ -217,7 +228,7 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [svgPath, setSvgPath] = useState("");
 
-  // 1. Calculate percentages
+  // Calculate percentages
   const allPercentages = useMemo(() => {
     return TIME_TABLE_STRUCTURE.map((row) => {
       const { score } = getRowData(currentCheck, row);
@@ -225,11 +236,13 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
     });
   }, [currentCheck]);
 
-  // 2. Dynamic Line Calculation
+  // Dynamic Line Calculation
   useLayoutEffect(() => {
     const updatePath = () => {
       if (!containerRef.current) return;
-      const dots = containerRef.current.querySelectorAll(".graph-dot-marker");
+      const dots = containerRef.current.querySelectorAll(
+        ".graph-dot-marker-current"
+      );
       if (dots.length === 0) return;
 
       const containerRect = containerRef.current.getBoundingClientRect();
@@ -258,26 +271,26 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
     };
   }, [allPercentages]);
 
-  // 3. Radar Data
+  // 3. Radar Data - UPDATED TO USE TIME CALCULATION
   const radarData = useMemo(() => {
-    const safeGet = (key: keyof SkillCheckRow) =>
-      (currentCheck?.[key] as number) || 0;
+    // Helper to get the score using the same logic as the table (calculating time)
+    const getVal = (id: string) => {
+      const rowConfig = TIME_TABLE_STRUCTURE.find((r) => r.id === id);
+      if (!rowConfig) return 0;
+      const { score } = getRowData(currentCheck, rowConfig);
+      return score;
+    };
 
     return [
-      { label: "Total Time", value: safeGet("time_score"), max: 10 },
-      { label: "Off/Fill", value: safeGet("care_off_finish_score"), max: 20 },
-      { label: "Care", value: safeGet("care_score"), max: 10 },
-      {
-        label: "One Color (Base)",
-        value: safeGet("color_base_score"),
-        max: 20,
-      },
-      { label: "One Color (Color)", value: safeGet("color_score"), max: 10 },
-      { label: "One Color (Top)", value: safeGet("color_apex_score"), max: 20 },
+      { label: "Total Time", value: getVal("29"), max: 10 },
+      { label: "Off/Fill", value: getVal("29-1"), max: 20 },
+      { label: "Care", value: getVal("29-3"), max: 10 },
+      { label: "One Color (Base)", value: getVal("29-4"), max: 20 },
+      { label: "One Color (Color)", value: getVal("29-5"), max: 10 },
+      { label: "One Color (Top)", value: getVal("29-6"), max: 20 },
     ];
   }, [currentCheck]);
 
-  // --- SUMMARY CONSTANTS ---
   const NATIONAL_AVG = {
     rank: "B",
     score: 267,
@@ -286,7 +299,6 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
 
   return (
     <div className="space-y-10 animate-in fade-in duration-500 pb-10">
-      {/* --- SUMMARY TABLE --- */}
       <div className="border border-gray-200 rounded-sm overflow-hidden">
         <table className="w-full text-center text-sm border-collapse">
           <thead>
@@ -453,21 +465,27 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
 
           <tbody className="text-gray-600">
             {TIME_TABLE_STRUCTURE.map((row, index) => {
-              // 1. Get Current Data
               const { score: currentScore, timeValue: currentTimeVal } =
                 getRowData(currentCheck, row);
               const currentDisplay = formatTimeDisplay(currentTimeVal);
 
-              // 2. Get Previous Data
               const { score: prevScore, timeValue: prevTimeVal } = getRowData(
                 previousCheck,
                 row
               );
               const prevDisplay = formatTimeDisplay(prevTimeVal);
 
+              const currentMinutes = parseMinutes(currentTimeVal);
+              const prevMinutes = parseMinutes(prevTimeVal);
               const avgScore = Math.floor(row.allocation * 0.8);
-              const percentage =
+
+              const currentPercentage =
                 (Math.min(currentScore, row.allocation) / row.allocation) * 100;
+
+              const prevPercentage = previousCheck
+                ? (Math.min(prevScore, row.allocation) / row.allocation) * 100
+                : null;
+
               const isTotalRow = row.id === "29";
               const rowClass = isTotalRow ? "bg-[#D6EAF0]" : "hover:bg-gray-50";
 
@@ -511,7 +529,7 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
                   </td>
 
                   <td className="border-r border-gray-100 bg-[#D9D9D9] align-middle">
-                    {renderTrend(currentScore, prevScore)}
+                    {renderTrend(currentMinutes, prevMinutes)}
                   </td>
                   <td className="text-gray-500 font-bold border-r border-gray-100 bg-[#D9D9D9] align-middle text-[10px]">
                     {prevDisplay !== "-" ? prevDisplay : "-"}
@@ -521,7 +539,6 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
                     {currentDisplay}
                   </td>
 
-                  {/* Graph */}
                   <td
                     colSpan={4}
                     className="relative p-0 h-full align-middle bg-white"
@@ -532,13 +549,23 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
                       <div className="w-1/4 border-r border-dashed border-gray-200 h-full"></div>
                       <div className="w-1/4 h-full"></div>
                     </div>
+
+                    {prevPercentage !== null && (
+                      <div
+                        className="absolute top-1/2 w-1 h-2.5 bg-gray-300 z-10 transform -translate-y-1/2 -translate-x-1/2 opacity-70"
+                        style={{ left: `${prevPercentage}%` }}
+                        title={`Last Time: ${prevDisplay}`}
+                      ></div>
+                    )}
+
                     <div
                       className="absolute top-1/2 left-0 h-2.5 bg-[#FFDACD] transform -translate-y-1/2 rounded-r-full z-0 opacity-90"
-                      style={{ width: `${percentage}%` }}
+                      style={{ width: `${currentPercentage}%` }}
                     ></div>
+
                     <div
-                      className="graph-dot-marker absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 border border-white"
-                      style={{ left: `${percentage}%` }}
+                      className="graph-dot-marker-current absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 border border-white"
+                      style={{ left: `${currentPercentage}%` }}
                       data-index={index}
                     ></div>
                   </td>
@@ -549,7 +576,6 @@ export default function TimeTab({ currentCheck, previousCheck }: TabProps) {
         </table>
       </div>
 
-      {/* --- RADAR CHART --- */}
       <div className="bg-white rounded-sm p-6 flex flex-col items-center justify-center">
         <h3 className="w-full text-left text-gray-700 font-semibold border-b pb-2 mb-6 text-sm">
           Graph Name

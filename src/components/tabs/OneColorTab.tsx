@@ -13,8 +13,9 @@ import type { Database } from "./../../lib/database.types";
 // --- TYPES ---
 type BaseSkillCheck = Database["public"]["Tables"]["skill_checks"]["Row"];
 
+// FIX: Replaced 'any' with specific primitive types to satisfy ESLint
 interface SkillCheck extends BaseSkillCheck {
-  [key: string]: unknown;
+  [key: string]: string | number | boolean | null | undefined;
 }
 
 interface TabProps {
@@ -31,7 +32,7 @@ interface OneColorTableItem {
   label: string;
   allocation: number;
   required?: boolean;
-  key: keyof SkillCheck;
+  key: string;
 }
 
 // --- DATA STRUCTURE ---
@@ -321,24 +322,19 @@ const calculateMaxScore = (rangeStart: number, rangeEnd: number) => {
 const calculateTotal = (data: SkillCheck | null) => {
   if (!data) return 0;
   let sum = 0;
-  let hasBreakdownData = false;
   ONE_COLOR_TABLE_STRUCTURE.forEach((row) => {
     const raw = data[row.key];
     if (raw != null) {
-      hasBreakdownData = true;
       const n = Number(raw);
       sum += Number.isFinite(n) ? n : 0;
     }
   });
-  if (hasBreakdownData && sum > 0) return sum;
-  if (typeof data.color_score === "number") return data.color_score;
-  if (typeof data.total_score === "number") return data.total_score;
-  return 0;
+  return sum;
 };
 
 const getPercentage = (
   check: SkillCheck | null,
-  key: keyof SkillCheck,
+  key: string,
   allocation: number
 ) => {
   if (!check || !allocation) return 0;
@@ -390,7 +386,6 @@ const CustomAxisTick = ({ x, y, payload }: CustomTickProps) => {
 
 // --- MAIN COMPONENT ---
 export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
-  // Use container ref for calculating coordinates
   const containerRef = useRef<HTMLDivElement>(null);
   const [svgPath, setSvgPath] = useState("");
 
@@ -400,7 +395,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
     );
   }, [currentCheck]);
 
-  // Recalculate line path whenever data or window size changes
   useLayoutEffect(() => {
     const updatePath = () => {
       if (!containerRef.current) return;
@@ -413,7 +407,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
 
       dots.forEach((dot) => {
         const rect = dot.getBoundingClientRect();
-        // Calculate center of dot relative to container
         const x = rect.left - containerRect.left + rect.width / 2;
         const y = rect.top - containerRect.top + rect.height / 2;
         points.push({ x, y });
@@ -427,8 +420,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
       setSvgPath(path);
     };
 
-    // Initial calculation
-    // Small timeout ensures the layout is fully settled
     const timeoutId = setTimeout(updatePath, 50);
 
     window.addEventListener("resize", updatePath);
@@ -490,6 +481,7 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
   const dynamicTotalMax = useMemo(() => calculateMaxScore(14, 28), []);
 
   const getRank = (score: number, max: number) => {
+    if (!max) return "-";
     const pct = (score / max) * 100;
     if (pct >= 90) return "AAA";
     if (pct >= 80) return "A.A.";
@@ -569,7 +561,7 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               <td className="bg-[#6AC2DB] text-white py-4">one color</td>
               <td className="text-teal-600">A</td>
               <td className="text-teal-600">
-                {Math.round(dynamicTotalMax * 0.44)}
+                {Math.round(dynamicTotalMax * 0.75)}
                 <span className="text-gray-400 text-xs font-normal">
                   /{dynamicTotalMax}
                 </span>
@@ -578,7 +570,7 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                 {getRank(prevTotal, dynamicTotalMax)}
               </td>
               <td className="text-blue-600 bg-[#F2F6FA] border-r border-white">
-                {prevTotal}
+                {previousCheck ? prevTotal : "-"}
                 <span className="text-gray-400 text-xs font-normal">
                   /{dynamicTotalMax}
                 </span>
@@ -598,13 +590,10 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
       </div>
 
       {/* Detailed Table Container */}
-      {/* We use 'relative' here so the absolute SVG is positioned relative to this box */}
       <div
         ref={containerRef}
         className="relative rounded-sm border border-teal-100 shadow-sm bg-white"
       >
-        {/* === SVG OVERLAY FOR GRAPH LINES === */}
-        {/* Placed *outside* the table but *inside* the relative container */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-20"
           style={{ overflow: "visible" }}
@@ -636,13 +625,13 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               </th>
               <th
                 rowSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[4%]"
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[3%]"
               >
                 Req
               </th>
               <th
                 rowSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[6%]"
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[5%]"
               >
                 Check pts
               </th>
@@ -654,41 +643,47 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
               </th>
               <th
                 rowSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[5%]"
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[4%]"
               >
                 Alloc
               </th>
               <th
                 colSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[10%]"
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[8%]"
               >
                 average
               </th>
               <th
                 colSpan={2}
-                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[10%]"
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[8%]"
               >
                 last time
               </th>
-              <th className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[5%]">
+              <th
+                colSpan={2}
+                className="bg-[#6AC2DB] p-1 border-r border-white/30 w-[8%]"
+              >
                 this time
               </th>
-              <th colSpan={4} className="bg-[#6AC2DB] p-1 w-[20%]">
+              <th colSpan={4} className="bg-[#6AC2DB] p-1 w-[30%]">
                 Evaluation graph
               </th>
             </tr>
             <tr className="text-white text-[9px]">
               <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                comparison
+                comp
               </th>
               <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
                 Score
               </th>
               <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
-                comparison
+                comp
               </th>
               <th className="bg-[#6AC2DB] border-r border-white/30 font-normal">
                 Score
+              </th>
+              <th className="bg-[#FF9EAF] border-r border-white/30 font-normal">
+                comp
               </th>
               <th className="bg-[#FF9EAF] border-r border-white/30 font-normal">
                 Score
@@ -724,7 +719,7 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
 
               return (
                 <tr
-                  key={row.key}
+                  key={`${row.key}-${index}`}
                   className="border-b border-gray-100 hover:bg-gray-50 h-9"
                 >
                   {row.catSpan && (
@@ -752,9 +747,10 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                     {row.id}
                   </td>
                   <td
-                    className={`text-left px-2 text-[9px] border-r border-gray-100 font-medium truncate align-middle ${
+                    className={`text-left px-2 text-[9px] border-r border-gray-100 font-medium truncate align-middle max-w-[150px] ${
                       row.label.includes("Too much") ? "bg-yellow-50" : ""
                     }`}
+                    title={row.label}
                   >
                     {row.label}
                   </td>
@@ -771,7 +767,12 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                     {renderTrend(rowScore, prevVal)}
                   </td>
                   <td className="text-blue-600 font-bold border-r border-gray-100 bg-[#F2F6FA] align-middle">
-                    {prevVal}
+                    {previousCheck ? prevVal : "-"}
+                  </td>
+
+                  {/* This Time Columns */}
+                  <td className="text-red-500 font-bold border-r border-gray-100 bg-[#FFF5F7] align-middle">
+                    {renderTrend(rowScore, rowScore)}
                   </td>
                   <td className="text-red-500 font-bold border-r border-gray-100 bg-[#FFF5F7] align-middle">
                     {rowScore}
@@ -801,7 +802,6 @@ export default function OneColorTab({ currentCheck, previousCheck }: TabProps) {
                       ></div>
                     )}
 
-                    {/* THE DOT MARKER - Used by useLayoutEffect to calculate lines */}
                     <div
                       className="graph-dot-marker absolute top-1/2 w-2 h-2 bg-[#56B8D4] rounded-full shadow-sm z-30 transform -translate-y-1/2 -translate-x-1/2 transition-all duration-700 border border-white"
                       style={{ left: `${percentage}%` }}

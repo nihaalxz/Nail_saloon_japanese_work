@@ -15,7 +15,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"; // Assuming you have shadcn/ui table components
+} from "@/components/ui/table";
 
 // Get the specific TS types from our generated Database types
 type CustomerInsert = Database["public"]["Tables"]["customers"]["Insert"];
@@ -44,11 +44,12 @@ interface CsvRow {
   color_score?: string;
   art_score?: string;
   total_time?: string;
-  // --- NEW FIELDS ADDED BELOW ---
+  // --- TIME FIELDS ---
   time_off_fill?: string;
   time_preparation?: string;
   time_one_color?: string;
   time_top_finish?: string;
+  // --- SCORE FIELDS ---
   color_base_score?: string;
   color_cuticle_score?: string;
   color_apex_score?: string;
@@ -66,32 +67,26 @@ interface CsvRow {
   time_score?: string;
 }
 
-// Helper: Safely parse integers. Returns null if the value is empty or not a number.
-// This prevents "NaN" errors in the database.
+// Helper: Safely parse integers.
 const safeParseInt = (value: string | undefined | null): number | null => {
   if (!value || value.trim() === "") return null;
   const parsed = parseInt(value, 10);
   return isNaN(parsed) ? null : parsed;
 };
+
 // Helper: Convert DD-MM-YYYY or DD/MM/YYYY to YYYY-MM-DD
 const formatDate = (dateStr: string | undefined | null): string => {
-  if (!dateStr) return new Date().toISOString().split("T")[0]; // Default to today if empty
+  if (!dateStr) return new Date().toISOString().split("T")[0];
 
-  // 1. Handle DD-MM-YYYY or DD/MM/YYYY
-  // Regex looks for: (1 or 2 digits) -or/ (1 or 2 digits) -or/ (4 digits)
   const match = dateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-
   if (match) {
     const [, day, month, year] = match;
-    // Return YYYY-MM-DD
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
 
-  // 2. Handle existing YYYY-MM-DD (if some rows are already correct)
   const isoMatch = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
   if (isoMatch) return dateStr;
 
-  // 3. Fallback: Try standard JS parsing, or return today if invalid
   const date = new Date(dateStr);
   if (!isNaN(date.getTime())) {
     return date.toISOString().split("T")[0];
@@ -100,6 +95,7 @@ const formatDate = (dateStr: string | undefined | null): string => {
   console.warn(`Invalid date format: ${dateStr}, defaulting to today.`);
   return new Date().toISOString().split("T")[0];
 };
+
 export function CsvUploader({
   onUploadComplete,
   closeDialog,
@@ -117,13 +113,11 @@ export function CsvUploader({
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
 
-      // Parse immediately for preview (Show first 5 rows)
       Papa.parse(selectedFile, {
         header: true,
         skipEmptyLines: true,
-        preview: 5, // Limit to 5 rows for the preview UI
+        preview: 5,
         complete: (results) => {
-          // Clean up rows just like we do in the upload
           const rows = (results.data as CsvRow[]).filter((row) =>
             Object.values(row).some((val) => val !== null && val !== "")
           );
@@ -154,7 +148,6 @@ export function CsvUploader({
     setIsUploading(true);
     setProgress(0);
 
-    // Parse the FULL file for upload
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -182,7 +175,7 @@ export function CsvUploader({
               continue;
             }
 
-            // 1. Prepare Customer Data
+            // 1. Prepare Customer Data (Updates Profile)
             const customerData: CustomerInsert = {
               customer_number: row.customer_number,
               name: row.name,
@@ -192,14 +185,13 @@ export function CsvUploader({
               prefecture: row.prefecture,
               application_date: formatDate(row.application_date),
               status: "New",
-              // Fix: Map these to the row instead of null
               time_off_fill: safeParseInt(row.time_off_fill),
               time_preparation: safeParseInt(row.time_preparation),
               time_one_color: safeParseInt(row.time_one_color),
               time_top_finish: safeParseInt(row.time_top_finish),
             };
 
-            // 2. Upsert Customer
+            // 2. Upsert Customer (Update if exists, Create if not)
             const { data: customer, error: customerError } = await supabase
               .from("customers")
               .upsert(customerData, {
@@ -211,11 +203,13 @@ export function CsvUploader({
             if (customerError) throw new Error(customerError.message);
             if (!customer) throw new Error("RLS blocked customer creation.");
 
-            // 3. Prepare Skill Check Data
+            // 3. Prepare Skill Check Data (Creates History)
             const skillCheckData: SkillCheckInsert = {
               customer_id: customer.id,
               imported_by: session.user.id,
-              imported_at: new Date().toISOString(),
+              imported_at: new Date().toISOString(), // Ensures chronological ordering
+
+              // Standard Scores
               total_score: safeParseInt(row.total_score),
               rank: row.rank,
               counseling_comment: row.counseling_comment,
@@ -225,7 +219,8 @@ export function CsvUploader({
               color_score: safeParseInt(row.color_score),
               art_score: safeParseInt(row.art_score),
               total_time: row.total_time,
-              // Fix: Map these detailed scores to the row instead of null
+
+              // Detailed Scores
               color_base_score: safeParseInt(row.color_base_score),
               color_cuticle_score: safeParseInt(row.color_cuticle_score),
               color_apex_score: safeParseInt(row.color_apex_score),
@@ -243,9 +238,19 @@ export function CsvUploader({
               ),
               care_nipper_score: safeParseInt(row.care_nipper_score),
               time_score: safeParseInt(row.time_score),
+
+              // --- TIME VALUE MAPPING (Crucial for Graph) ---
+              // Mapping CSV fields to the new DB columns
+              time_29_1_value: row.time_off_fill || null,
+              time_29_2_value: row.time_off_fill || null, // Using off_fill again if shared, or change to row.time_fill if exists
+              time_29_3_value: row.time_preparation || null,
+              time_29_4_value: row.time_one_color || null,
+              time_29_5_value: row.time_one_color || null,
+              time_29_6_value: row.time_top_finish || null,
+              time_29_7_value: row.total_time || null,
             };
 
-            // 4. Insert Skill Check
+            // 4. Insert Skill Check (ALWAYS INSERT NEW ROW)
             const { error: skillError } = await supabase
               .from("skill_checks")
               .insert([skillCheckData]);
@@ -255,7 +260,6 @@ export function CsvUploader({
             const errorMessage =
               error instanceof Error ? error.message : String(error);
             console.error(`Row error (${row.name}):`, errorMessage);
-            // Optional: Toast for individual errors, or just log to console to prevent spam
           }
 
           processedCount++;
