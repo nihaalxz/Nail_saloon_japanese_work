@@ -63,23 +63,33 @@ export default function CustomerDetails({
   const handleDownloadPDF = async () => {
     setIsGenerating(true);
     try {
+      // 1. Fetch from the SEPARATE Backend Server (Port 3001)
       const response = await fetch(
-        `/api/generate-pdf?customerId=${customerId}`,
+        `http://localhost:3001/generate-pdf?customerId=${customerId}`,
         {
           method: "GET",
         }
       );
 
+      // 2. Check for server errors (non-200 status)
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Server failed to generate PDF");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server Error: ${response.status}`);
       }
 
-      // Handle the binary PDF data
+      // 3. Handle the Binary PDF Data (Blob)
       const blob = await response.blob();
+
+      // 4. Validate Blob size (prevents downloading empty error files)
+      if (blob.size < 1000) {
+        throw new Error("Received empty or corrupt PDF file from server.");
+      }
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
+
+      // Filename fallback
       const fileName = `${customer?.name || "Customer"}_Report.pdf`;
       link.setAttribute("download", fileName);
 
@@ -89,9 +99,15 @@ export default function CustomerDetails({
       // Cleanup
       link.parentNode?.removeChild(link);
       window.URL.revokeObjectURL(url);
-    } catch (error) {
+    } catch (error: unknown) {
+      // <--- FIXED: Changed 'any' to 'unknown'
       console.error("PDF Download Error:", error);
-      alert("Failed to download PDF. Please check the console for details.");
+
+      // Safe error message extraction
+      const errorMessage =
+        error instanceof Error ? error.message : "An unknown error occurred";
+
+      alert(`Failed to download PDF: ${errorMessage}`);
     } finally {
       setIsGenerating(false);
     }

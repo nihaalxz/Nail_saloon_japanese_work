@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabaseClient"
-import type { Database } from "@/lib/database.types"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import type { Database } from "@/lib/database.types";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -10,78 +10,85 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog"
-import { Upload } from "lucide-react"
-import { CsvUploader } from "@/components/csv/csv-uploader"
+} from "@/components/ui/dialog";
+import { Upload } from "lucide-react";
+import { CsvUploader } from "@/components/csv/csv-uploader";
 import CustomerDetails from "../pages/Customer/CustomerDetails";
-type Customer = Database['public']['Tables']['customers']['Row']
+type Customer = Database["public"]["Tables"]["customers"]["Row"];
 
 const getStatusBadge = (status: string) => {
   switch (status.toLowerCase()) {
     case "in progress":
-      return "bg-teal-100 text-teal-800 hover:bg-teal-100"
+      return "bg-teal-100 text-teal-800 hover:bg-teal-100";
     case "new":
-      return "bg-red-100 text-red-800 hover:bg-red-100"
+      return "bg-red-100 text-red-800 hover:bg-red-100";
     case "completion":
-      return "bg-green-100 text-green-800 hover:bg-green-100"
+      return "bg-green-100 text-green-800 hover:bg-green-100";
     default:
-      return "bg-gray-100 text-gray-800 hover:bg-gray-100"
+      return "bg-gray-100 text-gray-800 hover:bg-gray-100";
   }
-}
+};
 
 export default function Dashboard() {
-  const [artists, setArtists] = useState<Customer[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null)
+  const [artists, setArtists] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(
+    null
+  );
 
   const fetchCustomers = async () => {
-    setLoading(true)
+    setLoading(true);
     const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('application_date', { ascending: false })
+      .from("customers")
+      .select("*")
+      .order("application_date", { ascending: false });
 
     if (error) {
-      console.error('Error fetching customers:', error)
-      setError(error.message)
+      console.error("Error fetching customers:", error);
+      setError(error.message);
     } else if (data) {
-      setArtists(data)
+      setArtists(data);
     }
-    setLoading(false)
-  }
+    setLoading(false);
+  };
 
   useEffect(() => {
-    fetchCustomers()
-  }, [])
+    fetchCustomers();
+  }, []);
 
   const handleUploadComplete = () => {
-    fetchCustomers() // Refresh the table after upload
-  }
+    fetchCustomers(); // Refresh the table after upload
+  };
 
   const closeDialog = () => {
-    setIsDialogOpen(false)
-  }
+    setIsDialogOpen(false);
+  };
 
   const handleRowClick = (customerId: number) => {
-    setSelectedCustomerId(customerId)
-  }
+    setSelectedCustomerId(customerId);
+  };
 
   const handleBackToList = () => {
-    setSelectedCustomerId(null)
-  }
+    setSelectedCustomerId(null);
+  };
 
   // If a customer is selected, show the details page
   if (selectedCustomerId) {
-    return <CustomerDetails customerId={selectedCustomerId} onBack={handleBackToList} />
+    return (
+      <CustomerDetails
+        customerId={selectedCustomerId}
+        onBack={handleBackToList}
+      />
+    );
   }
 
   return (
@@ -91,7 +98,7 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-800">Nail artist list</h1>
           <p className="text-sm text-gray-500">Naillist list</p>
         </div>
-        
+
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="bg-teal-600 hover:bg-teal-700 text-white font-semibold">
@@ -103,7 +110,7 @@ export default function Dashboard() {
             <DialogHeader>
               <DialogTitle>Import CSV File</DialogTitle>
             </DialogHeader>
-            <CsvUploader 
+            <CsvUploader
               onUploadComplete={handleUploadComplete}
               closeDialog={closeDialog}
             />
@@ -119,7 +126,9 @@ export default function Dashboard() {
               <TableHead className="text-gray-600">name</TableHead>
               <TableHead className="text-gray-600">status</TableHead>
               <TableHead className="text-gray-600">age</TableHead>
-              <TableHead className="text-gray-600">Nail artist history</TableHead>
+              <TableHead className="text-gray-600">
+                Nail artist history
+              </TableHead>
               <TableHead className="text-gray-600">Occupation</TableHead>
               <TableHead className="text-gray-600">prefectures</TableHead>
               <TableHead className="text-gray-600">Application date</TableHead>
@@ -146,16 +155,20 @@ export default function Dashboard() {
               </TableRow>
             ) : (
               artists.map((artist) => (
-                <TableRow 
+                <TableRow
                   key={artist.id}
                   onClick={() => handleRowClick(artist.id)}
                   className="cursor-pointer hover:bg-gray-50 transition-colors"
-                > 
+                >
                   <TableCell>{artist.customer_number}</TableCell>
                   <TableCell className="font-medium">{artist.name}</TableCell>
                   <TableCell>
-                    <Badge className={`capitalize ${getStatusBadge(artist.status || 'unknown')}`}>
-                      {artist.status || 'unknown'}
+                    <Badge
+                      className={`capitalize ${getStatusBadge(
+                        artist.status || "unknown"
+                      )}`}
+                    >
+                      {artist.status || "unknown"}
                     </Badge>
                   </TableCell>
                   <TableCell>{artist.age}</TableCell>
@@ -170,5 +183,5 @@ export default function Dashboard() {
         </Table>
       </div>
     </div>
-  )
+  );
 }

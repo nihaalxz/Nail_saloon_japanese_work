@@ -1,33 +1,37 @@
-import { useState } from 'react'
-import { useSupabaseClient } from '@supabase/auth-helpers-react'
+import { useState } from "react";
+import { useSupabaseClient } from "@supabase/auth-helpers-react";
 // We no longer import shadcn/ui components (Button, Input, Label, Card)
 
 export default function LoginPage() {
-  const supabase = useSupabaseClient()
-  const [email, setEmail] = useState<string>('')
-  const [password, setPassword] = useState<string>('')
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false) // Renamed from 'loading'
-  const [error, setError] = useState<string | null>(null)
+  const supabase = useSupabaseClient();
+  const [email, setEmail] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false); // Renamed from 'loading'
+  const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true) // Updated state
-    setError(null)
+    e.preventDefault();
+    setIsSubmitting(true); // Updated state
+    setError(null);
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
-      })
-      if (error) throw error
+      });
+      if (error) throw error;
       // Login is successful. The SessionProvider in App.tsx
       // will detect the new session and re-render automatically.
-    } catch (error: any) {
-      setError(error.message)
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        setError(error.message);
+      } else {
+        setError("An unknown error occurred.");
+      }
     } finally {
-      setIsSubmitting(false) // Updated state
+      setIsSubmitting(false); // Updated state
     }
-  }
+  };
 
   // Note: We don't need the 'isLoading' or 'useEffect' check here
   // because our App.tsx file already handles this logic.
@@ -37,7 +41,7 @@ export default function LoginPage() {
       className="min-h-screen flex flex-col items-center justify-center px-4"
       style={{
         background:
-          'linear-gradient(to bottom, #fabcb9 0%, #fabcb9 35%, #c0ced1 100%)',
+          "linear-gradient(to bottom, #fabcb9 0%, #fabcb9 35%, #c0ced1 100%)",
       }}
     >
       <h1 className="text-xl font-bold text-white mb-6">Basic skill check</h1>
@@ -94,10 +98,10 @@ export default function LoginPage() {
             className="mx-auto mt-2 bg-teal-600 text-white px-6 py-2 rounded-md 
   font-medium hover:bg-teal-700 transition disabled:opacity-60 block"
           >
-            {isSubmitting ? 'Signing in...' : 'Login'}
+            {isSubmitting ? "Signing in..." : "Login"}
           </button>
         </form>
       </div>
     </div>
-  )
+  );
 }
