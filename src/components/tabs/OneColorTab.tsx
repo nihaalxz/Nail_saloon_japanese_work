@@ -38,9 +38,10 @@ interface OneColorTableItem {
 // --- DATA STRUCTURE ---
 const ONE_COLOR_TABLE_STRUCTURE: OneColorTableItem[] = [
   // === CATEGORY: BASE (14-19) ===
+  // Total span is 16 (14[2] + 15[2] + 16[2] + 17[2] + 18[2] + 19[6])
   {
     category: "base",
-    catSpan: 12,
+    catSpan: 16,
     item: "14. protrusion",
     itemSpan: 2,
     id: "14-1",
@@ -117,18 +118,43 @@ const ONE_COLOR_TABLE_STRUCTURE: OneColorTableItem[] = [
     key: "color_18_2",
   },
   {
-    item: "19. Tamari dent",
-    itemSpan: 2,
+    item: "19. Unevenness/Brush", // Translated: 色ムラ・ハケ筋
+    itemSpan: 6, // Increased from 2 to 6
     id: "19-1",
-    label: "remaining gel",
+    label: "Cuticle line", // Translated: キューティクルライン
     allocation: 10,
     key: "color_19_1",
   },
   {
     id: "19-2",
-    label: "root step",
+    label: "Corner", // Translated: コーナー
     allocation: 20,
     key: "color_19_2",
+  },
+  // --- ADDED 19-3 to 19-6 ---
+  {
+    id: "19-3",
+    label: "Yellow line", // Translated: イエローライン
+    allocation: 10,
+    key: "color_19_3",
+  },
+  {
+    id: "19-4",
+    label: "Overall", // Translated: 全体
+    allocation: 10,
+    key: "color_19_4",
+  },
+  {
+    id: "19-5",
+    label: "Side", // Translated: サイド
+    allocation: 20,
+    key: "color_19_5",
+  },
+  {
+    id: "19-6",
+    label: "Side straight", // Translated: サイドストレート
+    allocation: 30,
+    key: "color_19_6",
   },
 
   // === CATEGORY: COLOR (20-25) ===
@@ -221,9 +247,10 @@ const ONE_COLOR_TABLE_STRUCTURE: OneColorTableItem[] = [
   { id: "25-3", label: "underflow", allocation: 20, key: "color_25_3" },
 
   // === CATEGORY: TOP (26-28) ===
+  // Total span is 10 (26[2] + 27[6] + 28[2])
   {
     category: "top",
-    catSpan: 8,
+    catSpan: 10, // Increased from 8 to 10
     item: "26. High Point",
     itemSpan: 2,
     id: "26-1",
@@ -238,25 +265,43 @@ const ONE_COLOR_TABLE_STRUCTURE: OneColorTableItem[] = [
     key: "color_26_2",
   },
   {
-    item: "27. Tamari dent",
-    itemSpan: 4,
+    item: "27. Unevenness/Brush", // Translated: 色ムラ・ハケ筋
+    itemSpan: 6, // Increased from 4 to 6
     id: "27-1",
-    label: "remaining gel",
+    label: "Yellow line", // Translated: イエローライン
     allocation: 10,
     key: "color_27_1",
   },
-  { id: "27-2", label: "root step", allocation: 10, key: "color_27_2" },
+  {
+    id: "27-2",
+    label: "Surface", // Translated: 表面
+    allocation: 10,
+    key: "color_27_2",
+  },
   {
     id: "27-3",
-    label: "Too much scraping",
-    allocation: 10,
+    label: "Side", // Translated: サイド
+    allocation: 10, // Updated allocation per image (Check point 10)
     key: "color_27_3",
   },
   {
     id: "27-4",
-    label: "Insufficient cutting",
-    allocation: 10,
+    label: "Side straight", // Translated: サイドストレート
+    allocation: 10, // Updated allocation per image (Check point 10)
     key: "color_27_4",
+  },
+  // --- ADDED 27-5 to 27-6 ---
+  {
+    id: "27-5",
+    label: "Gel equal line", // Translated: ジェルイクォーライン
+    allocation: 10,
+    key: "color_27_5",
+  },
+  {
+    id: "27-6",
+    label: "Contour side", // Translated: コンターサイド
+    allocation: 20,
+    key: "color_27_6",
   },
   {
     item: "28. protrusion",

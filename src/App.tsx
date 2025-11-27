@@ -1,31 +1,31 @@
-import { useSession } from '@supabase/auth-helpers-react'
-import LoginPage from './pages/LoginPage'
-import { Sidebar } from './components/sidebar'
-import Dashboard from './pages/Dashboard' // Import the real Dashboard
-import { Toaster } from "@/components/ui/toaster" // Import the Toaster
+import { useSession } from "@supabase/auth-helpers-react";
+import LoginPage from "./pages/LoginPage";
+import { Sidebar } from "./components/sidebar";
+import Dashboard from "./pages/Dashboard";
+import { Toaster } from "@/components/ui/toaster";
 
-// The old placeholder Dashboard component is now deleted from here
-
-// App.tsx now acts as a router
 function App() {
-  const session = useSession() // This hook gets the user's session
+  const session = useSession();
 
   return (
-    // This div no longer has "container" or "mx-auto"
     <div>
       {!session ? (
-        <LoginPage /> 
+        <LoginPage />
       ) : (
-        // This flex container holds the sidebar and main content
-        <div className="flex h-screen bg-gray-100">
-          <Sidebar /> 
-          <Dashboard /> {/* This will now show the table */}
+        // 1. OUTER CONTAINER: Full screen height, hidden overflow
+        <div className="flex h-screen w-full overflow-hidden bg-gray-100">
+          {/* 2. SIDEBAR: Fixed width is handled inside the component */}
+          <Sidebar />
+
+          {/* 3. MAIN CONTENT: Fills remaining space and SCROLLS independently */}
+          <main className="flex-1 h-full overflow-y-auto">
+            <Dashboard />
+          </main>
         </div>
       )}
-      {/* This allows our toasts (pop-up notifications) to be displayed */}
       <Toaster />
     </div>
-  )
+  );
 }
 
-export default App
+export default App;
